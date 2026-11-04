@@ -61,6 +61,9 @@ pub struct Plan {
     /// What the computer has, for drivers and power (the installer detects it).
     #[serde(default)]
     pub hardware: Hardware,
+    /// More kernel parameters (a serial console, a hardware quirk).
+    #[serde(default)]
+    pub extra_kernel_params: Vec<String>,
     /// The GUIDs the new partitions get.
     pub efi_guid: String,
     pub root_guid: String,
@@ -142,6 +145,12 @@ impl Plan {
         }
         if let Some(w) = &self.windows_esp {
             ensure!(valid_guid(w), "Windows' EFI partition is named by its GUID");
+        }
+        for k in &self.extra_kernel_params {
+            ensure!(
+                !k.is_empty() && k.chars().all(|c| c.is_ascii_graphic() && c != '"' && c != '\\' && c != '$'),
+                "not a kernel parameter: {k}"
+            );
         }
         for v in [&self.time_zone, &self.keyboard, &self.locale] {
             ensure!(
@@ -374,7 +383,7 @@ impl Plan {
   }});
   swapDevices = [ {{ device = "/swap/swapfile"; }} ];
   boot.resumeDevice = config.fileSystems."/".device;
-  boot.kernelParams = [ "resume_offset=${{lib.trim (builtins.readFile ./resume-offset)}}" ];
+  boot.kernelParams = [ "resume_offset=${{lib.trim (builtins.readFile ./resume-offset)}}"{extra} ];
 
   nyxos = {{
     user = {{
@@ -386,6 +395,7 @@ impl Plan {
 }}
 "#,
             host = nix_str(&self.hostname),
+            extra = self.extra_kernel_params.iter().map(|k| format!(" {}", nix_str(k))).collect::<String>(),
             login = nix_str(&self.person.login),
             name = nix_str(&self.person.full_name),
         )
@@ -479,6 +489,7 @@ mod tests {
             windows_esp: None,
             nyxos_source: None,
             hardware: Hardware::default(),
+            extra_kernel_params: vec![],
             efi_guid: "11111111-2222-4333-8444-555555555555".into(),
             root_guid: "66666666-7777-4888-9999-aaaaaaaaaaaa".into(),
         }
