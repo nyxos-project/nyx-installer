@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/nyx-install"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Ken Smith"]
+repository = "https://github.com/nyxos-project/nyx-installer"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+strip = true

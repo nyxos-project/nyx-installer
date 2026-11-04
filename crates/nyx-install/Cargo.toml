@@ -1,0 +1,21 @@
+[package]
+name = "nyx-install"
+description = "Installing NyxOS: disks, plans and the steps that carry them out (no UI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "nyx-install"
+path = "src/bin/nyx-install.rs"
+
+[dependencies]
+nyx-system-proto = { git = "https://github.com/nyxos-project/nyx-system.git", rev = "8e723ee" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
