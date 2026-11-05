@@ -233,11 +233,14 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
             (None, true) => "Make room first: shrink Windows' partition in Windows' Disk Management (32 GB at least), then start the installer again.".into(),
             (None, false) => "There's no free space of 32 GB or more on this disk.".into(),
         };
-        g.append(&w::row(
-            if d.windows() { "Beside Windows" } else { "In the free space" },
-            &beside_text,
-            Some(beside.upcast_ref()),
-        ));
+        // An empty disk has nothing to keep.
+        if !d.partitions.is_empty() {
+            g.append(&w::row(
+                if d.windows() { "Beside Windows" } else { "In the free space" },
+                &beside_text,
+                Some(beside.upcast_ref()),
+            ));
+        }
         g.append(&w::row(
             "Erase the disk",
             &format!("Everything on {} goes{}.", d.name(), if d.windows() { ", Windows too" } else { "" }),
