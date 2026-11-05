@@ -67,11 +67,13 @@ fn one(step: &Step, send: &mut dyn FnMut(Event)) -> Result<()> {
                 send(Event::Line(l.to_string()));
             }
             if !out.status.success() {
-                // The first error says why; a build's last lines are often just its output path.
+                // Nix's last "error:" with words says why (the first is often bare).
                 let why = err
                     .lines()
-                    .find(|l| l.trim_start().starts_with("error:"))
-                    .map(|l| l.trim().to_string())
+                    .map(str::trim)
+                    .filter(|l| l.starts_with("error:") && l.len() > "error:".len())
+                    .last()
+                    .map(String::from)
                     .unwrap_or_else(|| last_line(&err));
                 bail!("{} failed: {why}", args[0]);
             }
