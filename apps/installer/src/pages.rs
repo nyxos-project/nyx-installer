@@ -153,7 +153,8 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
     let disks = ui.disks.borrow().clone();
     let chosen = ui.choices.borrow().disk.clone();
     let g = group("Disks");
-    let mut first: Option<gtk::CheckButton> = None;
+    // A group of its own even with one disk, so each shows as a choice, not a checkbox.
+    let first = Some(gtk::CheckButton::new());
     for d in &disks {
         let what = if d.busy {
             "In use (the live USB, or mounted)".to_string()
@@ -169,11 +170,7 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
             )
         };
         let radio = gtk::CheckButton::new();
-        if let Some(f) = &first {
-            radio.set_group(Some(f));
-        } else {
-            first = Some(radio.clone());
-        }
+        radio.set_group(first.as_ref());
         radio.set_active(chosen.as_deref() == Some(&d.path));
         radio.set_sensitive(!d.busy);
         let (u, path, windows, has_gap) =

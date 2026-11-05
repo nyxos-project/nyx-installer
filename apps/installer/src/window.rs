@@ -59,8 +59,10 @@ impl Ui {
         self.scroller.vadjustment().set_value(0.0);
         self.update();
         // The keyboard starts on the page's first control.
-        let page = self.page.clone();
+        let (page, window) = (self.page.clone(), self.window.clone());
         glib::idle_add_local_once(move || {
+            // From nothing, so the first control, not the one after what had focus.
+            gtk::prelude::GtkWindowExt::set_focus(&window, None::<&gtk::Widget>);
             page.child_focus(gtk::DirectionType::TabForward);
         });
     }
