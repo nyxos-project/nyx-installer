@@ -10,6 +10,8 @@ use nyx_system_proto::hardware::Hardware;
 use serde::{Deserialize, Serialize};
 
 pub const ROOT: &str = "/mnt";
+/// Where the built system's store path is kept between building and installing it.
+const TOPLEVEL: &str = "/tmp/nyx-install-system";
 const LUKS_TYPE: &str = "ca7d7ccb-63ed-4c53-861c-1742536059cc";
 const LINUX_TYPE: &str = "0fc63daf-8483-4772-8e79-3d69d8477de4";
 const EFI_SIZE: u64 = 1 << 30;
@@ -289,12 +291,27 @@ impl Plan {
             lock.extend(["--override-input", "nyxos", src]);
         }
         s.push(run("Pinning NyxOS's version", &lock));
-        let target = format!("{flake}#{}", self.hostname);
-        let mut install = vec!["nixos-install", "--root", ROOT, "--flake", &target, "--no-root-passwd", "--no-channel-copy"];
-        if self.nyxos_source.is_some() {
-            install.extend(["--option", "substitute", "false"]);
+        // Built on the live system, whose store has NyxOS already; nixos-install then only
+        // copies it to the disk and sets up the boot menu.
+        let attr = format!("{flake}#nixosConfigurations.{}.config.system.build.toplevel", self.hostname);
+        let mut build =
+            vec!["nix", "build", "--no-link", "--print-out-paths", &attr, "--override-input", "nyxos-overrides", &overrides];
+        if let Some(src) = &source {
+            build.extend(["--override-input", "nyxos", src]);
         }
-        s.push(run("Installing NyxOS (this takes a while)", &install));
+        s.push(Step::RunTo {
+            title: "Building NyxOS for this computer".into(),
+            args: build.iter().map(|x| x.to_string()).collect(),
+            path: TOPLEVEL.into(),
+        });
+        s.push(run(
+            "Installing NyxOS (this takes a while)",
+            &[
+                "sh",
+                "-c",
+                &format!("nixos-install --root {ROOT} --system \"$(cat {TOPLEVEL})\" --no-root-passwd --no-channel-copy"),
+            ],
+        ));
         // Recovery and offline rebuilds need every source on the new system.
         let store = format!("local?root={ROOT}");
         let mut archive =
@@ -508,9 +525,10 @@ mod tests {
         assert!(text.contains("mkfs.btrfs --force --label nyxos /dev/mapper/cryptroot"));
         assert!(text.contains("mount -o subvol=@home,compress=zstd,noatime /dev/mapper/cryptroot /mnt/home"));
         assert!(text.contains("btrfs filesystem mkswapfile --size 16g /mnt/swap/swapfile"));
-        assert!(
-            text.contains("nixos-install --root /mnt --flake /mnt/etc/nyxos/flake#nyx-laptop --no-root-passwd --no-channel-copy")
-        );
+        assert!(text.contains("nix build --no-link --print-out-paths /mnt/etc/nyxos/flake#nixosConfigurations.nyx-laptop.config.system.build.toplevel"));
+        assert!(text.contains(
+            "nixos-install --root /mnt --system \"$(cat /tmp/nyx-install-system)\" --no-root-passwd --no-channel-copy"
+        ));
         assert!(text.ends_with("umount --recursive /mnt\ncryptsetup close cryptroot"));
         assert!(!text.contains("correct horse") && !text.contains("hunter22"), "secrets never show");
         let Step::Run { input, .. } =
