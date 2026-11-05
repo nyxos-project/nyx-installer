@@ -1,0 +1,65 @@
+/* Nyx Installer, on the shared Design 2 sheet. */
+
+.installer-side {
+  border-right: 1px solid @border;
+  background: @surface;
+}
+
+.installer-steps {
+  background: transparent;
+  padding: 10px 8px;
+}
+
+.installer-steps row {
+  border-radius: 8px;
+}
+
+.installer-step {
+  padding: 8px 10px;
+}
+
+.installer-step-number {
+  color: @dim_text;
+  font-feature-settings: "tnum";
+}
+
+.installer-steps row:selected {
+  background: alpha(@accent, 0.16);
+}
+
+.installer-steps row:selected .installer-step-number {
+  color: @accent;
+}
+
+.installer-page {
+  padding: 28px 32px 32px;
+}
+
+.installer-title {
+  font-size: 1.7em;
+  font-weight: 700;
+}
+
+.installer-lede {
+  color: @dim_text;
+}
+
+.installer-footer {
+  padding: 10px 16px;
+  border-top: 1px solid @border;
+}
+
+.installer-problem {
+  color: @dim_text;
+  font-size: 0.92em;
+  margin: 0 8px;
+}
+
+.installer-now {
+  font-weight: 600;
+}
+
+.installer-log {
+  font-size: 0.85em;
+  padding: 8px;
+}

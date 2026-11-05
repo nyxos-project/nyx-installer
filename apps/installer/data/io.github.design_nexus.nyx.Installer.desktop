@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Install NyxOS
+Comment=Install NyxOS on this computer
+Exec=nyx-installer
+Icon=system-software-install
+Categories=System;
+Terminal=false

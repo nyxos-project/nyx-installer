@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/nyx-install"]
+members = ["crates/nyx-install", "apps/installer"]
 
 [workspace.package]
 version = "0.1.0"
