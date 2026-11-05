@@ -190,6 +190,15 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
             }
         });
         let row = w::row(&d.name(), &format!("{} · {what}", d.path), Some(radio.upcast_ref()));
+        // The whole row chooses the disk.
+        let click = gtk::GestureClick::new();
+        let r = radio.clone();
+        click.connect_released(move |_, _, _, _| {
+            if r.is_sensitive() {
+                r.set_active(true);
+            }
+        });
+        row.add_controller(click);
         g.append(&row);
     }
     if disks.is_empty() {

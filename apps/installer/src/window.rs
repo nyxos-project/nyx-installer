@@ -58,6 +58,18 @@ impl Ui {
         self.page.append(&pages::build(self, self.page()));
         self.scroller.vadjustment().set_value(0.0);
         self.update();
+        // The keyboard starts on the page's first control.
+        let page = self.page.clone();
+        glib::idle_add_local_once(move || {
+            page.child_focus(gtk::DirectionType::TabForward);
+        });
+    }
+
+    /// Next, when the page has what it needs.
+    pub fn next(self: &Rc<Self>) {
+        if !self.busy.get() && self.page() != Page::Review && pages::problem(self, self.page()).is_none() {
+            self.show(self.current.get() + 1);
+        }
     }
 
     /// Next and the reason it waits, after a change on the page.
@@ -177,12 +189,23 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
     let u = ui.clone();
     back.connect_clicked(move |_| u.show(u.current.get().saturating_sub(1)));
     let u = ui.clone();
-    next.connect_clicked(move |_| {
-        if pages::problem(&u, u.page()).is_none() {
-            u.show(u.current.get() + 1);
-        }
-    });
+    next.connect_clicked(move |_| u.next());
     nyx_ui::keys::install(&ui.window, nyx_ui::keys::Common { close: true, ..Default::default() });
+    // Alt+Right or Ctrl+Enter: Next; Alt+Left: Back.
+    let keys = gtk::EventControllerKey::new();
+    let u = ui.clone();
+    keys.connect_key_pressed(move |_, k, _, mods| {
+        let alt = mods.contains(gtk::gdk::ModifierType::ALT_MASK);
+        let ctrl = mods.contains(gtk::gdk::ModifierType::CONTROL_MASK);
+        match k {
+            gtk::gdk::Key::Right if alt => u.next(),
+            gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter if ctrl => u.next(),
+            gtk::gdk::Key::Left if alt && !u.busy.get() => u.show(u.current.get().saturating_sub(1)),
+            _ => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
+    });
+    ui.window.add_controller(keys);
     let u = ui.clone();
     window.connect_close_request(move |_| if u.busy.get() { glib::Propagation::Stop } else { glib::Propagation::Proceed });
     ui.show(0);
