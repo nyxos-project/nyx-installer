@@ -70,9 +70,9 @@ fn one(step: &Step, send: &mut dyn FnMut(Event)) -> Result<()> {
                 // Nix's last "error:" with words says why (the first is often bare).
                 let why = err
                     .lines()
+                    .rev()
                     .map(str::trim)
-                    .filter(|l| l.starts_with("error:") && l.len() > "error:".len())
-                    .last()
+                    .find(|l| l.starts_with("error:") && l.len() > "error:".len())
                     .map(String::from)
                     .unwrap_or_else(|| last_line(&err));
                 bail!("{} failed: {why}", args[0]);
