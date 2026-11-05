@@ -314,8 +314,18 @@ impl Plan {
         ));
         // Recovery and offline rebuilds need every source on the new system.
         let store = format!("local?root={ROOT}");
-        let mut archive =
-            vec!["nix", "flake", "archive", "--to", &store, &flake, "--override-input", "nyxos-overrides", &overrides];
+        let mut archive = vec![
+            "nix",
+            "flake",
+            "archive",
+            "--no-check-sigs",
+            "--to",
+            &store,
+            &flake,
+            "--override-input",
+            "nyxos-overrides",
+            &overrides,
+        ];
         if let Some(src) = &source {
             archive.extend(["--override-input", "nyxos", src]);
         }

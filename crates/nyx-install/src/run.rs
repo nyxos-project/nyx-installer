@@ -62,8 +62,18 @@ fn one(step: &Step, send: &mut dyn FnMut(Event)) -> Result<()> {
                 .stdin(Stdio::null())
                 .output()
                 .with_context(|| format!("can't start {}", args[0]))?;
+            let err = String::from_utf8_lossy(&out.stderr);
+            for l in err.lines() {
+                send(Event::Line(l.to_string()));
+            }
             if !out.status.success() {
-                bail!("{} failed: {}", args[0], last_line(&String::from_utf8_lossy(&out.stderr)));
+                // The first error says why; a build's last lines are often just its output path.
+                let why = err
+                    .lines()
+                    .find(|l| l.trim_start().starts_with("error:"))
+                    .map(|l| l.trim().to_string())
+                    .unwrap_or_else(|| last_line(&err));
+                bail!("{} failed: {why}", args[0]);
             }
             std::fs::write(path, &out.stdout).with_context(|| format!("can't write {path}"))
         }
