@@ -44,3 +44,12 @@ fn main() -> gtk::glib::ExitCode {
     });
     app.run_with_args::<&str>(&[])
 }
+
+#[cfg(test)]
+#[test]
+fn style_uses_only_defined_colours() {
+    for theme in nyx_theme::all() {
+        let sheet = nyx_theme::sheet_for_check("installer-window", &theme, true) + include_str!("style.css");
+        assert_eq!(nyx_theme::undefined_colors(&sheet), Vec::<String>::new(), "{}", theme.id);
+    }
+}
