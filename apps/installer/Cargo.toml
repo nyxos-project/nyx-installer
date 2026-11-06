@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 nyx-install = { path = "../../crates/nyx-install" }
 nyx-system-proto = { git = "https://github.com/nyxos-project/nyx-system.git", rev = "8e723ee" }
-nyx-core = { git = "https://github.com/design-nexus/nyx-core.git", rev = "394ddf8193797cd1f420fac98b097d04fa75f0e2" }
+nyx-core = { git = "https://github.com/design-nexus/nyx-core.git", rev = "0b511a6e338f4c2c818bad6ebd351ae406578c00" }
 nyx-ui = { git = "https://github.com/design-nexus/nyx-design.git", rev = "b49ab72631cd6da8dc1bc241078200fcb7a83703" }
 nyx-theme = { git = "https://github.com/design-nexus/nyx-design.git", rev = "b49ab72631cd6da8dc1bc241078200fcb7a83703" }
 gtk = { version = "0.11", package = "gtk4", features = ["v4_18"] }
