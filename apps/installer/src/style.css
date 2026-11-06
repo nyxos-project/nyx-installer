@@ -64,6 +64,29 @@ window.installer-window button.installer-big {
   padding: 0 28px;
 }
 
+.installer-summary {
+  background: @theme_card;
+  border-radius: var(--nyx-radius-card);
+  padding: 6px 16px;
+}
+
+.installer-summary-row {
+  padding: 10px 0;
+  border-bottom: 1px solid @hairline;
+}
+
+.installer-summary-row:last-child {
+  border-bottom: none;
+}
+
+.installer-summary-key {
+  color: @theme_dim_text;
+}
+
+.installer-details {
+  color: @theme_dim_text;
+}
+
 .installer-log {
   font-size: 0.85em;
   padding: 8px;

@@ -47,6 +47,7 @@ pub fn problem(ui: &Ui, page: Page) -> Option<String> {
         Page::Review => {
             let d = choices::disk_problem(&c, &ui.disks.borrow()).or_else(|| choices::person_problem(&c));
             d.or_else(|| (c.mode == Mode::Erase && !c.erase_confirmed).then(|| "Confirm that the disk is erased.".into()))
+                .or_else(|| (unsafe { libc_geteuid() } != 0).then(|| "The installer has to run as root.".into()))
         }
     }
 }
@@ -254,6 +255,7 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
             for (title, again) in [("Passphrase", false), ("The same again", true)] {
                 let e = gtk::PasswordEntry::new();
                 e.set_show_peek_icon(true);
+                e.set_size_request(240, -1);
                 e.set_text(if again { &c.passphrase_again } else { &c.passphrase });
                 let u = ui.clone();
                 e.connect_changed(move |e| {
@@ -282,7 +284,7 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
 fn entry(text: &str, on: impl Fn(String) + 'static) -> gtk::Entry {
     let e = gtk::Entry::new();
     e.set_text(text);
-    e.set_width_chars(24);
+    e.set_size_request(240, -1);
     e.connect_changed(move |e| on(e.text().to_string()));
     e
 }
@@ -335,6 +337,7 @@ fn you(ui: &Rc<Ui>) -> gtk::Widget {
     for (title, again) in [("Password", false), ("The same again", true)] {
         let e = gtk::PasswordEntry::new();
         e.set_show_peek_icon(true);
+        e.set_size_request(240, -1);
         e.set_text(if again { &c.password_again } else { &c.password });
         let u = ui.clone();
         e.connect_changed(move |e| {
@@ -369,14 +372,8 @@ fn review(ui: &Rc<Ui>) -> gtk::Widget {
         page.append(&w::banner("Choose a disk first.", true));
         return page.upcast();
     };
-    let root = unsafe { libc_geteuid() } == 0;
-    if !root {
-        page.append(&w::banner(
-            "The installer has to run as root to change the disks. Start it from the live USB's desktop.",
-            true,
-        ));
-    }
-    let g = group("");
+    let g = w::vbox(0);
+    g.add_css_class("installer-summary");
     let place = match c.mode {
         Mode::Erase => format!("{} is erased, and NyxOS takes all of it.", d.name()),
         Mode::Alongside => format!(
@@ -393,9 +390,18 @@ fn review(ui: &Rc<Ui>) -> gtk::Widget {
         ("Encryption", if c.encrypt { "On, with a passphrase at each start".to_string() } else { "Off".to_string() }),
         ("You", format!("{} ({})", c.full_name.trim(), c.login)),
         ("Computer", c.hostname.clone()),
-        ("Language, keyboard, time zone", format!("{lang}, {kb}, {}", c.time_zone.replace('_', " "))),
+        ("Language", format!("{lang}, {kb}, {}", c.time_zone.replace('_', " "))),
     ] {
-        let r = w::row(t, &v, None);
+        let r = w::hbox(16);
+        r.add_css_class("installer-summary-row");
+        let k = w::label(t, "installer-summary-key");
+        k.set_size_request(110, -1);
+        k.set_valign(gtk::Align::Start);
+        let v = w::label(&v, "");
+        v.set_wrap(true);
+        v.set_hexpand(true);
+        r.append(&k);
+        r.append(&v);
         g.append(&r);
     }
     page.append(&g);
@@ -424,13 +430,6 @@ fn review(ui: &Rc<Ui>) -> gtk::Widget {
         );
         page.append(&g);
     }
-    let install = gtk::Button::with_label("Install NyxOS");
-    install.add_css_class(if c.mode == Mode::Erase { "destructive-action" } else { "suggested-action" });
-    install.set_halign(gtk::Align::End);
-    install.set_sensitive(root && problem(ui, Page::Review).is_none());
-    let u = ui.clone();
-    install.connect_clicked(move |_| start(&u));
-    page.append(&install);
     page.upcast()
 }
 
@@ -440,7 +439,7 @@ unsafe extern "C" {
 }
 
 /// Install: the plan's steps on a thread, their progress here.
-fn start(ui: &Rc<Ui>) {
+pub fn start(ui: &Rc<Ui>) {
     let c = ui.choices.borrow().clone();
     let disks = ui.disks.borrow().clone();
     let Some(disk) = c.disk.as_ref().and_then(|p| disks.iter().find(|d| &d.path == p)).cloned() else { return };
@@ -468,7 +467,11 @@ fn start(ui: &Rc<Ui>) {
     log.add_css_class("installer-log");
     let scroll = gtk::ScrolledWindow::builder().child(&log).min_content_height(260).vexpand(true).build();
     let details = gtk::Expander::new(Some("Details"));
+    details.add_css_class("installer-details");
+    details.set_halign(gtk::Align::Center);
     details.set_child(Some(&scroll));
+    // Open, it takes the column's width for the log.
+    details.connect_expanded_notify(|e| e.set_halign(if e.is_expanded() { gtk::Align::Fill } else { gtk::Align::Center }));
     page.append(&details);
     ui.take_over(&page);
 

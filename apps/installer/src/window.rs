@@ -58,8 +58,11 @@ impl Ui {
         }
         self.dots.set_visible(true);
         self.back.set_visible(i > 0);
-        self.next.set_visible(p.page != Page::Review);
-        self.next.set_label(if p.page == Page::Welcome { "Get started" } else { "Next" });
+        self.next.set_label(match p.page {
+            Page::Welcome => "Get started",
+            Page::Review => "Install NyxOS",
+            _ => "Next",
+        });
         self.footer.set_visible(true);
         self.rebuild();
     }
@@ -80,9 +83,14 @@ impl Ui {
         });
     }
 
-    /// Next, when the page has what it needs.
+    /// Next, when the page has what it needs; on the last page, Install.
     pub fn next(self: &Rc<Self>) {
-        if !self.busy.get() && self.page() != Page::Review && pages::problem(self, self.page()).is_none() {
+        if self.busy.get() || pages::problem(self, self.page()).is_some() {
+            return;
+        }
+        if self.page() == Page::Review {
+            pages::start(self);
+        } else {
             self.show(self.current.get() + 1);
         }
     }
@@ -91,6 +99,15 @@ impl Ui {
     pub fn update(&self) {
         let problem = pages::problem(self, self.page());
         self.next.set_sensitive(problem.is_none());
+        // Installing over a whole disk is the one thing that can't be undone.
+        let erase = self.page() == Page::Review && self.choices.borrow().mode == crate::choices::Mode::Erase;
+        if erase {
+            self.next.remove_css_class("suggested-action");
+            self.next.add_css_class("destructive-action");
+        } else {
+            self.next.remove_css_class("destructive-action");
+            self.next.add_css_class("suggested-action");
+        }
         self.problem.set_text(problem.as_deref().unwrap_or(""));
     }
 
