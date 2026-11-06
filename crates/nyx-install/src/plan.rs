@@ -386,7 +386,7 @@ impl Plan {
 
     pub fn host_nix(&self) -> String {
         let luks = if self.passphrase.is_some() {
-            "\n  # The encrypted disk, opened before the system starts.\n  boot.initrd.systemd.enable = true;\n"
+            "\n  # The encrypted disk, opened before the system starts; TRIM reaches the SSD.\n  boot.initrd.systemd.enable = true;\n  boot.initrd.luks.devices.cryptroot.allowDiscards = true;\n"
         } else {
             ""
         };
