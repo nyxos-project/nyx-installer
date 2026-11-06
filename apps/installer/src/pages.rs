@@ -18,15 +18,14 @@ pub enum Page {
 
 pub struct Step {
     pub title: &'static str,
-    pub icon: &'static str,
     pub page: Page,
 }
 
 pub const PAGES: &[Step] = &[
-    Step { title: "Welcome", icon: "starred-symbolic", page: Page::Welcome },
-    Step { title: "Where to install", icon: "drive-harddisk-symbolic", page: Page::Disk },
-    Step { title: "You and this computer", icon: "system-users-symbolic", page: Page::You },
-    Step { title: "Review and install", icon: "view-list-bullet-symbolic", page: Page::Review },
+    Step { title: "Welcome", page: Page::Welcome },
+    Step { title: "Where to install", page: Page::Disk },
+    Step { title: "You and this computer", page: Page::You },
+    Step { title: "Review and install", page: Page::Review },
 ];
 
 pub fn build(ui: &Rc<Ui>, page: Page) -> gtk::Widget {
@@ -63,6 +62,22 @@ fn heading(title: &str, text: &str) -> gtk::Box {
     b
 }
 
+/// A heading in the middle, for the pages that take over the window.
+fn centred(title: &str, text: &str) -> gtk::Box {
+    let b = w::vbox(6);
+    let t = w::label(title, "installer-title");
+    t.set_xalign(0.5);
+    b.append(&t);
+    if !text.is_empty() {
+        let l = w::label(text, "installer-lede");
+        l.set_wrap(true);
+        l.set_xalign(0.5);
+        l.set_justify(gtk::Justification::Center);
+        b.append(&l);
+    }
+    b
+}
+
 fn group(title: &str) -> gtk::Box {
     let b = w::vbox(6);
     b.add_css_class("installer-group");
@@ -90,12 +105,9 @@ fn dropdown(items: &[(String, String)], current: &str, on: impl Fn(String) + 'st
 
 fn welcome(ui: &Rc<Ui>) -> gtk::Widget {
     let page = w::vbox(18);
-    page.append(&heading(
-        "Install NyxOS",
-        "A few questions, then NyxOS installs itself on this computer. Nothing on its disks changes until you choose Install on the last step.",
-    ));
+    page.append(&heading("Install NyxOS", "A few questions first. Nothing on this computer changes until you choose Install."));
     let c = ui.choices.borrow().clone();
-    let g = group("Language and region");
+    let g = group("");
     let pairs = |l: &[(&str, &str)]| l.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
     let u = ui.clone();
     g.append(&w::row(
@@ -106,7 +118,7 @@ fn welcome(ui: &Rc<Ui>) -> gtk::Widget {
     let u = ui.clone();
     g.append(&w::row(
         "Keyboard",
-        "Also for the disk's passphrase when the computer starts.",
+        "Also for the disk's passphrase at startup.",
         Some(dropdown(&pairs(choices::KEYBOARDS), &c.keyboard, move |v| u.choices.borrow_mut().keyboard = v).upcast_ref()),
     ));
     let zones: Vec<(String, String)> = ui.time_zones.iter().map(|z| (z.clone(), z.replace('_', " "))).collect();
@@ -117,36 +129,12 @@ fn welcome(ui: &Rc<Ui>) -> gtk::Widget {
         Some(dropdown(&zones, &c.time_zone, move |v| u.choices.borrow_mut().time_zone = v).upcast_ref()),
     ));
     page.append(&g);
-    let g = group("What you get");
-    for (t, d, icon) in [
-        (
-            "The Nyx desktop",
-            "Hyprland with Nyx's bar, dock, apps and Welcome to set up the rest after you sign in.",
-            "computer-symbolic",
-        ),
-        (
-            "Encrypted and snapshotted",
-            "LUKS2 encryption, and Btrfs snapshots of the system and your files.",
-            "channel-secure-symbolic",
-        ),
-        (
-            "Always reversible",
-            "Every change is a generation you can go back to, and NyxOS Recovery is in the boot menu.",
-            "edit-undo-symbolic",
-        ),
-    ] {
-        g.append(&w::row(t, d, Some(gtk::Image::from_icon_name(icon).upcast_ref())));
-    }
-    page.append(&g);
     page.upcast()
 }
 
 fn disk(ui: &Rc<Ui>) -> gtk::Widget {
     let page = w::vbox(18);
-    page.append(&heading(
-        "Where to install",
-        "Choose a disk, then whether NyxOS takes all of it or the free space beside what's there.",
-    ));
+    page.append(&heading("Where to install", "A disk, and whether NyxOS takes all of it or only its free space."));
     if let Some(e) = ui.disks_error.borrow().as_ref() {
         page.append(&w::banner(&format!("The disks couldn't be read: {e}"), true));
     }
@@ -253,7 +241,7 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
         g.append(
             &w::switch_row(
                 "Encrypt NyxOS",
-                "Your files can't be read without the passphrase, which is asked for each time the computer starts.",
+                "A passphrase at each start keeps your files unreadable without it.",
                 c.encrypt,
                 move |on| {
                     u.choices.borrow_mut().encrypt = on;
@@ -281,7 +269,7 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
                 });
                 g.append(&w::row(
                     title,
-                    if again { "" } else { "At least 8 characters. Keep it safe: without it, nothing on the disk can be read." },
+                    if again { "" } else { "At least 8 characters. Without it the disk can't be read." },
                     Some(e.upcast_ref()),
                 ));
             }
@@ -301,10 +289,7 @@ fn entry(text: &str, on: impl Fn(String) + 'static) -> gtk::Entry {
 
 fn you(ui: &Rc<Ui>) -> gtk::Widget {
     let page = w::vbox(18);
-    page.append(&heading(
-        "You and this computer",
-        "The account you sign in with, which can change settings for everyone, and the computer's name.",
-    ));
+    page.append(&heading("You and this computer", "Your account, which can change settings for everyone, and the computer's name."));
     let c = ui.choices.borrow().clone();
     let g = group("You");
     let login = entry(&c.login, {
@@ -345,8 +330,8 @@ fn you(ui: &Rc<Ui>) -> gtk::Widget {
         }
         u.update();
     });
-    g.append(&w::row("Your name", "As it shows when you sign in.", Some(name.upcast_ref())));
-    g.append(&w::row("Login", "Lowercase, for your home folder and the terminal.", Some(login.upcast_ref())));
+    g.append(&w::row("Your name", "", Some(name.upcast_ref())));
+    g.append(&w::row("Login", "Lowercase, for your home folder.", Some(login.upcast_ref())));
     for (title, again) in [("Password", false), ("The same again", true)] {
         let e = gtk::PasswordEntry::new();
         e.set_show_peek_icon(true);
@@ -365,12 +350,11 @@ fn you(ui: &Rc<Ui>) -> gtk::Widget {
         });
         g.append(&w::row(
             title,
-            if again { "" } else { "For signing in, unlocking and changing settings." },
+            "",
             Some(e.upcast_ref()),
         ));
     }
     page.append(&g);
-    let g = group("This computer");
     g.append(&w::row("Computer's name", "How it shows on your network.", Some(host.upcast_ref())));
     page.append(&g);
     page.upcast()
@@ -378,7 +362,7 @@ fn you(ui: &Rc<Ui>) -> gtk::Widget {
 
 fn review(ui: &Rc<Ui>) -> gtk::Widget {
     let page = w::vbox(18);
-    page.append(&heading("Review and install", "Check what happens. Install starts it; it takes a few minutes."));
+    page.append(&heading("Review and install", "Installing takes a few minutes."));
     let c = ui.choices.borrow().clone();
     let disks = ui.disks.borrow().clone();
     let Some(d) = c.disk.as_ref().and_then(|p| disks.iter().find(|d| &d.path == p)).cloned() else {
@@ -392,7 +376,7 @@ fn review(ui: &Rc<Ui>) -> gtk::Widget {
             true,
         ));
     }
-    let g = group("What happens");
+    let g = group("");
     let place = match c.mode {
         Mode::Erase => format!("{} is erased, and NyxOS takes all of it.", d.name()),
         Mode::Alongside => format!(
@@ -406,7 +390,7 @@ fn review(ui: &Rc<Ui>) -> gtk::Widget {
     let kb = choices::KEYBOARDS.iter().find(|(id, _)| *id == c.keyboard).map_or(c.keyboard.as_str(), |(_, n)| n);
     for (t, v) in [
         ("Where", place),
-        ("Encryption", if c.encrypt { "On: the passphrase is asked for at each start".to_string() } else { "Off".to_string() }),
+        ("Encryption", if c.encrypt { "On, with a passphrase at each start".to_string() } else { "Off".to_string() }),
         ("You", format!("{} ({})", c.full_name.trim(), c.login)),
         ("Computer", c.hostname.clone()),
         ("Language, keyboard, time zone", format!("{lang}, {kb}, {}", c.time_zone.replace('_', " "))),
@@ -470,12 +454,13 @@ fn start(ui: &Rc<Ui>) {
     };
     ui.busy.set(true);
     let page = w::vbox(16);
-    page.append(&heading("Installing NyxOS", "This takes a few minutes. Keep the computer plugged in."));
+    page.append(&centred("Installing NyxOS", "A few minutes. Keep the computer plugged in."));
     let bar = gtk::ProgressBar::new();
     bar.set_show_text(false);
+    bar.add_css_class("installer-bar");
     page.append(&bar);
     let now = w::label("Starting…", "installer-now");
-    now.set_xalign(0.0);
+    now.set_xalign(0.5);
     page.append(&now);
     let log = gtk::TextView::new();
     log.set_editable(false);
@@ -529,14 +514,12 @@ fn start(ui: &Rc<Ui>) {
 }
 
 fn done() -> gtk::Widget {
-    let page = w::vbox(16);
-    page.append(&heading(
-        "NyxOS is installed",
-        "Take out the USB stick and restart. Welcome opens when you first sign in, to set up the rest.",
-    ));
-    let restart = gtk::Button::with_label("Restart now");
+    let page = w::vbox(20);
+    page.append(&centred("NyxOS is installed", "Take out the USB stick and restart. Welcome sets up the rest when you sign in."));
+    let restart = gtk::Button::with_label("Restart");
     restart.add_css_class("suggested-action");
-    restart.set_halign(gtk::Align::Start);
+    restart.add_css_class("installer-big");
+    restart.set_halign(gtk::Align::Center);
     restart.connect_clicked(|_| {
         let _ = std::process::Command::new("systemctl").arg("reboot").spawn();
     });

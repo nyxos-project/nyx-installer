@@ -1,43 +1,38 @@
-/* Nyx Installer, on the shared Design 2 sheet. */
+/* Nyx Installer, on the shared Design 2 sheet: one narrow column, nothing around it. */
 
-.installer-side {
-  border-right: 1px solid @hairline;
-  background: @theme_panel;
+window.installer-window {
+  background: @theme_bg;
 }
 
-.installer-steps {
-  background: transparent;
-  padding: 10px 8px;
+.installer-dots {
+  margin: 28px 0 0;
 }
 
-.installer-steps row {
-  border-radius: 8px;
+.installer-dot {
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 999px;
+  background: @track;
+  transition: all 200ms ease-out;
 }
 
-.installer-step {
-  padding: 8px 10px;
+.installer-dot.done {
+  background: alpha(@theme_accent, 0.55);
 }
 
-.installer-step-number {
-  color: @theme_dim_text;
-  font-feature-settings: "tnum";
-}
-
-.installer-steps row:selected {
-  background: alpha(@theme_accent, 0.16);
-}
-
-.installer-steps row:selected .installer-step-number {
-  color: @theme_accent;
+.installer-dot.current {
+  min-width: 22px;
+  background: @theme_accent;
 }
 
 .installer-page {
-  padding: 28px 32px 32px;
+  padding: 24px 32px;
 }
 
 .installer-title {
-  font-size: 1.7em;
-  font-weight: 700;
+  font-size: 1.9em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
 .installer-lede {
@@ -45,8 +40,7 @@
 }
 
 .installer-footer {
-  padding: 10px 16px;
-  border-top: 1px solid @hairline;
+  padding: 16px 32px 28px;
 }
 
 .installer-problem {
@@ -56,7 +50,18 @@
 }
 
 .installer-now {
-  font-weight: 600;
+  color: @theme_dim_text;
+}
+
+progressbar.installer-bar trough,
+progressbar.installer-bar progress {
+  min-height: 4px;
+  border-radius: 999px;
+}
+
+window.installer-window button.installer-big {
+  min-height: 40px;
+  padding: 0 28px;
 }
 
 .installer-log {

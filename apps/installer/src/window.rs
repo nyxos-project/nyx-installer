@@ -1,5 +1,6 @@
-//! The window: the steps down the side, the page in the middle, Back and Next under it.
-//! Next waits until the page has what it needs; while installing, nothing can be changed.
+//! The window: a dot per step at the top, the page in a narrow column in the middle, Back
+//! and Next under it. Next waits until the page has what it needs; while installing,
+//! nothing can be changed.
 
 use crate::choices::Choices;
 use crate::pages::{self, PAGES, Page};
@@ -15,8 +16,7 @@ pub struct Ui {
     pub disks: RefCell<Vec<Disk>>,
     pub disks_error: RefCell<Option<String>>,
     pub time_zones: Vec<String>,
-    header: chrome::AppHeader,
-    list: gtk::ListBox,
+    dots: gtk::Box,
     page: gtk::Box,
     scroller: gtk::ScrolledWindow,
     current: Cell<usize>,
@@ -38,12 +38,25 @@ impl Ui {
         }
         let i = i.min(PAGES.len() - 1);
         self.current.set(i);
-        if let Some(row) = self.list.row_at_index(i as i32) {
-            self.list.select_row(Some(&row));
-        }
         let p = &PAGES[i];
-        self.header.set_subtitle(if p.page == Page::Welcome { "" } else { p.title });
         chrome::set_title(&self.window, "Install NyxOS", p.title);
+        let mut dot = self.dots.first_child();
+        let mut n = 0;
+        while let Some(d) = dot {
+            if n == i {
+                d.add_css_class("current");
+            } else {
+                d.remove_css_class("current");
+            }
+            if n < i {
+                d.add_css_class("done");
+            } else {
+                d.remove_css_class("done");
+            }
+            n += 1;
+            dot = d.next_sibling();
+        }
+        self.dots.set_visible(true);
         self.back.set_visible(i > 0);
         self.next.set_visible(p.page != Page::Review);
         self.next.set_label(if p.page == Page::Welcome { "Get started" } else { "Next" });
@@ -79,14 +92,6 @@ impl Ui {
         let problem = pages::problem(self, self.page());
         self.next.set_sensitive(problem.is_none());
         self.problem.set_text(problem.as_deref().unwrap_or(""));
-        // Reaching a step needs the ones before it.
-        let reachable =
-            (0..PAGES.len()).take_while(|&i| i == 0 || pages::problem(self, PAGES[i - 1].page).is_none()).last().unwrap_or(0);
-        let mut i = 0;
-        while let Some(row) = self.list.row_at_index(i) {
-            row.set_sensitive(!self.busy.get() && i as usize <= reachable.max(self.current.get()));
-            i += 1;
-        }
     }
 
     /// The page takes over the window (installing, done) without the footer or the steps.
@@ -96,7 +101,7 @@ impl Ui {
         }
         self.page.append(widget);
         self.footer.set_visible(false);
-        self.list.set_sensitive(false);
+        self.dots.set_visible(false);
     }
 
     pub fn load_disks(self: &Rc<Self>) {
@@ -118,41 +123,26 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
     let outer = w::vbox(0);
     outer.add_css_class("window-frame");
     window.set_child(Some(&outer));
-    let header = chrome::app_header(&window, crate::APP_ID, "Install NyxOS");
-    outer.append(&header.root);
 
-    let body = w::hbox(0);
-    body.set_vexpand(true);
-    outer.append(&body);
-
-    let list = gtk::ListBox::new();
-    list.add_css_class("installer-steps");
-    for (i, p) in PAGES.iter().enumerate() {
-        let row = w::hbox(10);
-        row.add_css_class("installer-step");
-        let num = w::label(&format!("{}", i + 1), "installer-step-number");
-        num.set_width_chars(2);
-        row.append(&num);
-        row.append(&gtk::Image::from_icon_name(p.icon));
-        let title = w::label(p.title, "");
-        title.set_hexpand(true);
-        row.append(&title);
-        list.append(&row);
+    let dots = w::hbox(8);
+    dots.add_css_class("installer-dots");
+    dots.set_halign(gtk::Align::Center);
+    for p in PAGES {
+        let d = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        d.add_css_class("installer-dot");
+        d.set_tooltip_text(Some(p.title));
+        dots.append(&d);
     }
-    let side = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).child(&list).build();
-    side.add_css_class("installer-side");
-    side.set_size_request(230, -1);
-    body.append(&side);
+    outer.append(&dots);
 
-    let main = w::vbox(0);
-    main.set_hexpand(true);
     let page = w::vbox(0);
     page.add_css_class("installer-page");
-    let clamp = nyx_ui::clamp::Clamp::new(&page, 760);
+    page.set_valign(gtk::Align::Center);
+    let clamp = nyx_ui::clamp::Clamp::new(&page, 600);
     let scroller = gtk::ScrolledWindow::builder().hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).child(&clamp).build();
-    main.append(&scroller);
+    outer.append(&scroller);
 
-    let footer = w::hbox(8);
+    let footer = w::hbox(12);
     footer.add_css_class("installer-footer");
     let back = gtk::Button::with_label("Back");
     let problem = w::label("", "installer-problem");
@@ -164,8 +154,8 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
     footer.append(&back);
     footer.append(&problem);
     footer.append(&next);
-    main.append(&footer);
-    body.append(&main);
+    let footer_clamp = nyx_ui::clamp::Clamp::new(&footer, 600);
+    outer.append(&footer_clamp);
 
     let ui = Rc::new(Ui {
         window: window.clone(),
@@ -173,8 +163,7 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
         disks: RefCell::default(),
         disks_error: RefCell::default(),
         time_zones: crate::choices::time_zones(),
-        header,
-        list: list.clone(),
+        dots,
         page,
         scroller,
         current: Cell::new(0),
@@ -186,8 +175,6 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
     });
     ui.load_disks();
 
-    let u = ui.clone();
-    list.connect_row_activated(move |_, row| u.show(row.index() as usize));
     let u = ui.clone();
     back.connect_clicked(move |_| u.show(u.current.get().saturating_sub(1)));
     let u = ui.clone();
