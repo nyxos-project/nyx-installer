@@ -417,7 +417,9 @@ impl Plan {
       name = {login};
       description = {name};
     }};
-    snapshots.enable = true;{windows}
+    snapshots.enable = true;
+    # Standalone Nyx apps are each person's own (Welcome offers them).
+    standaloneApps = "per-user";{windows}
   }};
 }}
 "#,
