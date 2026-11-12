@@ -246,6 +246,8 @@ impl Plan {
             ));
         }
         s.push(run("Making the Btrfs filesystem", &["mkfs.btrfs", "--force", "--label", "nyxos", &fs]));
+        // The live USB has no /mnt of its own.
+        s.push(run("Making subvolumes", &["mkdir", "-p", ROOT]));
         s.push(run("Making subvolumes", &["mount", &fs, ROOT]));
         for v in ["@", "@home", "@nix", "@log", "@swap"] {
             s.push(run("Making subvolumes", &["btrfs", "subvolume", "create", &format!("{ROOT}/{v}")]));
@@ -330,6 +332,17 @@ impl Plan {
             archive.extend(["--override-input", "nyxos", src]);
         }
         s.push(run("Keeping NyxOS's sources for recovery", &archive));
+        // flake.lock pins NyxOS to the live USB's copy until the first update moves it to
+        // the channel; without a root the weekly garbage collection deletes that copy and
+        // every later rebuild fails.
+        if let Some(p) = &self.nyxos_source {
+            let roots = format!("{ROOT}/nix/var/nix/gcroots");
+            s.push(run("Keeping NyxOS's sources for recovery", &["mkdir", "-p", &roots]));
+            s.push(run(
+                "Keeping NyxOS's sources for recovery",
+                &["ln", "-sfn", p, &format!("{roots}/nyxos-install-source")],
+            ));
+        }
         s.push(run_with(
             "Setting your password",
             &["nixos-enter", "--root", ROOT, "-c", "chpasswd"],
@@ -538,7 +551,8 @@ mod tests {
         assert!(text.contains("--new=1:0:+1G --typecode=1:c12a7328-f81f-11d2-ba4b-00a0c93ec93b --partition-guid=1:11111111-2222-4333-8444-555555555555"));
         assert!(text.contains("--new=2:0:0 --typecode=2:ca7d7ccb-63ed-4c53-861c-1742536059cc"));
         assert!(text.contains("cryptsetup luksFormat --type luks2 --batch-mode --label NyxOS --key-file=- /dev/disk/by-partuuid/66666666-7777-4888-9999-aaaaaaaaaaaa  < (hidden)"));
-        assert!(text.contains("mkfs.btrfs --force --label nyxos /dev/mapper/cryptroot"));
+        assert!(text.contains("mkfs.btrfs --force --label nyxos /dev/mapper/cryptroot\nmkdir -p /mnt\nmount /dev/mapper/cryptroot /mnt\n"));
+        assert!(!text.contains("gcroots"), "nothing to keep without the live USB's source");
         assert!(text.contains("mount -o subvol=@home,compress=zstd,noatime /dev/mapper/cryptroot /mnt/home"));
         assert!(text.contains("btrfs filesystem mkswapfile --size 16g /mnt/swap/swapfile"));
         assert!(text.contains("nix build --no-link --print-out-paths /mnt/etc/nyxos/flake#nixosConfigurations.nyx-laptop.config.system.build.toplevel"));
@@ -553,6 +567,17 @@ mod tests {
             panic!()
         };
         assert_eq!(input.as_deref(), Some("amy:hunter22\n"));
+    }
+
+    #[test]
+    fn the_live_usbs_source_outlives_garbage_collection() {
+        let mut p = plan(Target::Erase { disk: "/dev/nvme0n1".into() });
+        p.nyxos_source = Some("/nix/store/aaaa-source".into());
+        let text = Plan::describe(&p.steps(&disk(false)).unwrap());
+        assert!(text.contains("--override-input nyxos path:/nix/store/aaaa-source"));
+        assert!(text.contains(
+            "mkdir -p /mnt/nix/var/nix/gcroots\nln -sfn /nix/store/aaaa-source /mnt/nix/var/nix/gcroots/nyxos-install-source\n"
+        ));
     }
 
     #[test]
