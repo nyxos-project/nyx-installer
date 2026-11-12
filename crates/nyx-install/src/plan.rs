@@ -338,15 +338,23 @@ impl Plan {
         if let Some(p) = &self.nyxos_source {
             let roots = format!("{ROOT}/nix/var/nix/gcroots");
             s.push(run("Keeping NyxOS's sources for recovery", &["mkdir", "-p", &roots]));
-            s.push(run(
-                "Keeping NyxOS's sources for recovery",
-                &["ln", "-sfn", p, &format!("{roots}/nyxos-install-source")],
-            ));
+            s.push(run("Keeping NyxOS's sources for recovery", &["ln", "-sfn", p, &format!("{roots}/nyxos-install-source")]));
         }
         s.push(run_with(
             "Setting your password",
             &["nixos-enter", "--root", ROOT, "-c", "chpasswd"],
             format!("{}:{}\n", self.person.login, self.person.password),
+        ));
+        // The lock was written from the live system, which sees the overrides under /mnt;
+        // the installed system has the same folder at /etc/nyxos/overrides.
+        s.push(run(
+            "Finishing",
+            &[
+                "sed",
+                "-i",
+                &format!("s#\"{ROOT}/etc/nyxos/overrides\"#\"/etc/nyxos/overrides\"#"),
+                &format!("{flake}/flake.lock"),
+            ],
         ));
         s.push(run(
             "Keeping the install's log",
@@ -551,7 +559,9 @@ mod tests {
         assert!(text.contains("--new=1:0:+1G --typecode=1:c12a7328-f81f-11d2-ba4b-00a0c93ec93b --partition-guid=1:11111111-2222-4333-8444-555555555555"));
         assert!(text.contains("--new=2:0:0 --typecode=2:ca7d7ccb-63ed-4c53-861c-1742536059cc"));
         assert!(text.contains("cryptsetup luksFormat --type luks2 --batch-mode --label NyxOS --key-file=- /dev/disk/by-partuuid/66666666-7777-4888-9999-aaaaaaaaaaaa  < (hidden)"));
-        assert!(text.contains("mkfs.btrfs --force --label nyxos /dev/mapper/cryptroot\nmkdir -p /mnt\nmount /dev/mapper/cryptroot /mnt\n"));
+        assert!(text.contains(
+            "mkfs.btrfs --force --label nyxos /dev/mapper/cryptroot\nmkdir -p /mnt\nmount /dev/mapper/cryptroot /mnt\n"
+        ));
         assert!(!text.contains("gcroots"), "nothing to keep without the live USB's source");
         assert!(text.contains("mount -o subvol=@home,compress=zstd,noatime /dev/mapper/cryptroot /mnt/home"));
         assert!(text.contains("btrfs filesystem mkswapfile --size 16g /mnt/swap/swapfile"));
@@ -559,6 +569,9 @@ mod tests {
         assert!(text.contains(
             "nixos-install --root /mnt --system \"$(cat /tmp/nyx-install-system)\" --no-root-passwd --no-channel-copy"
         ));
+        assert!(
+            text.contains("sed -i s#\"/mnt/etc/nyxos/overrides\"#\"/etc/nyxos/overrides\"# /mnt/etc/nyxos/flake/flake.lock\n")
+        );
         assert!(text.ends_with("umount --recursive /mnt\ncryptsetup close cryptroot"));
         assert!(!text.contains("correct horse") && !text.contains("hunter22"), "secrets never show");
         let Step::Run { input, .. } =
