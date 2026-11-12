@@ -91,7 +91,17 @@ fn group(title: &str) -> gtk::Box {
 fn dropdown(items: &[(String, String)], current: &str, on: impl Fn(String) + 'static) -> gtk::DropDown {
     let names: Vec<&str> = items.iter().map(|(_, n)| n.as_str()).collect();
     let d = gtk::DropDown::from_strings(&names);
-    d.set_enable_search(items.len() > 20);
+    if items.len() > 20 {
+        // Search filters only with an expression for the text it matches; anywhere in the
+        // name, so "Berlin" finds "Europe/Berlin".
+        d.set_expression(Some(gtk::PropertyExpression::new(
+            gtk::StringObject::static_type(),
+            None::<&gtk::Expression>,
+            "string",
+        )));
+        d.set_search_match_mode(gtk::StringFilterMatchMode::Substring);
+        d.set_enable_search(true);
+    }
     if let Some(i) = items.iter().position(|(id, _)| id == current) {
         d.set_selected(i as u32);
     }
