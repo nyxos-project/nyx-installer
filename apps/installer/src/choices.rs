@@ -54,6 +54,49 @@ impl Default for Choices {
     }
 }
 
+/// The status the installer exits with to be started again in the chosen keyboard layout:
+/// cage reads its layout (`XKB_DEFAULT_LAYOUT`) only when it starts, and the password and
+/// passphrase must be typed in the layout they're entered with later. The live USB's cage
+/// unit restarts on it and reads `keyboard.env`.
+pub const RESTART_FOR_KEYBOARD: i32 = 75;
+const RESTART_DIR: &str = "/run/nyx-installer";
+
+impl Choices {
+    /// Keeps the first page's choices for the restarted installer, and the layout for cage.
+    pub fn save_for_restart(&self, dir: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        std::fs::write(dir.join("keyboard.env"), format!("XKB_DEFAULT_LAYOUT={}\n", self.keyboard))?;
+        std::fs::write(
+            dir.join("first-page"),
+            format!("locale={}\nkeyboard={}\ntime_zone={}\n", self.locale, self.keyboard, self.time_zone),
+        )
+    }
+
+    /// The first page's choices from before a restart, where they name known options.
+    pub fn restore_after_restart(&mut self, dir: &std::path::Path, time_zones: &[String]) {
+        let Ok(text) = std::fs::read_to_string(dir.join("first-page")) else { return };
+        for (key, value) in text.lines().filter_map(|l| l.split_once('=')) {
+            match key {
+                "locale" if LOCALES.iter().any(|(v, _)| *v == value) => self.locale = value.into(),
+                "keyboard" if KEYBOARDS.iter().any(|(v, _)| *v == value) => self.keyboard = value.into(),
+                "time_zone" if time_zones.iter().any(|z| z == value) => self.time_zone = value.into(),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Where the installer keeps choices across a restart, when the live USB asks for that
+/// (`NYX_INSTALLER_RESTART`, set in its cage unit); None elsewhere.
+pub fn restart_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("NYX_INSTALLER_RESTART").map(|_| std::path::PathBuf::from(RESTART_DIR))
+}
+
+/// The layout this session was started with.
+pub fn session_layout() -> String {
+    std::env::var("XKB_DEFAULT_LAYOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "us".into())
+}
+
 pub const LOCALES: &[(&str, &str)] = &[
     ("en_US.UTF-8", "English (United States)"),
     ("en_GB.UTF-8", "English (United Kingdom)"),
@@ -238,5 +281,29 @@ mod tests {
         c.password_again = "pw".into();
         c.login = "Amy".into();
         assert!(person_problem(&c).is_some());
+    }
+
+    #[test]
+    fn the_first_page_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("nyx-installer-restart-{}", std::process::id()));
+        let zones = vec!["Europe/Berlin".to_string()];
+        let mut c = Choices::default();
+        c.locale = "de_DE.UTF-8".into();
+        c.keyboard = "de".into();
+        c.time_zone = "Europe/Berlin".into();
+        c.save_for_restart(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("keyboard.env")).unwrap(), "XKB_DEFAULT_LAYOUT=de\n");
+        let mut back = Choices::default();
+        back.restore_after_restart(&dir, &zones);
+        assert_eq!(
+            (back.locale.as_str(), back.keyboard.as_str(), back.time_zone.as_str()),
+            ("de_DE.UTF-8", "de", "Europe/Berlin")
+        );
+        std::fs::write(dir.join("first-page"), "keyboard=de;rm -rf /\ntime_zone=Mars/Base\n").unwrap();
+        let mut odd = Choices::default();
+        let before = (odd.keyboard.clone(), odd.time_zone.clone());
+        odd.restore_after_restart(&dir, &zones);
+        assert_eq!((odd.keyboard, odd.time_zone), before, "only known options come back");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -174,12 +174,17 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
     let footer_clamp = nyx_ui::clamp::Clamp::new(&footer, 600);
     outer.append(&footer_clamp);
 
+    let time_zones = crate::choices::time_zones();
+    let mut choices = Choices::default();
+    if let Some(dir) = crate::choices::restart_dir() {
+        choices.restore_after_restart(&dir, &time_zones);
+    }
     let ui = Rc::new(Ui {
         window: window.clone(),
-        choices: RefCell::new(Choices::default()),
+        choices: RefCell::new(choices),
         disks: RefCell::default(),
         disks_error: RefCell::default(),
-        time_zones: crate::choices::time_zones(),
+        time_zones,
         dots,
         page,
         scroller,

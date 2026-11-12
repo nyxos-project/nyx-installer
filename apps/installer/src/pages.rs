@@ -120,7 +120,20 @@ fn welcome(ui: &Rc<Ui>) -> gtk::Widget {
     g.append(&w::row(
         "Keyboard",
         "Also for the disk's passphrase at startup.",
-        Some(dropdown(&pairs(choices::KEYBOARDS), &c.keyboard, move |v| u.choices.borrow_mut().keyboard = v).upcast_ref()),
+        Some(
+            dropdown(&pairs(choices::KEYBOARDS), &c.keyboard, move |v| {
+                u.choices.borrow_mut().keyboard = v;
+                // On the live USB the installer starts again in the new layout, so the
+                // password and passphrase are typed as they'll be entered later.
+                let c = u.choices.borrow();
+                if let Some(dir) = choices::restart_dir() {
+                    if c.keyboard != choices::session_layout() && c.save_for_restart(&dir).is_ok() {
+                        std::process::exit(choices::RESTART_FOR_KEYBOARD);
+                    }
+                }
+            })
+            .upcast_ref(),
+        ),
     ));
     let zones: Vec<(String, String)> = ui.time_zones.iter().map(|z| (z.clone(), z.replace('_', " "))).collect();
     let u = ui.clone();
