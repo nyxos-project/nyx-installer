@@ -137,20 +137,22 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
         gtk::ApplicationWindow::builder().application(app).title("Install NyxOS").default_width(1000).default_height(700).build();
     window.add_css_class("installer-window");
     window.set_size_request(760, 560);
-    let outer = w::vbox(0);
-    outer.add_css_class("window-frame");
-    window.set_child(Some(&outer));
-
+    // The steps' dots are the frame's top; it keeps its height while they hide.
+    let top = w::hbox(0);
+    top.add_css_class("installer-top");
     let dots = w::hbox(8);
     dots.add_css_class("installer-dots");
     dots.set_halign(gtk::Align::Center);
+    dots.set_valign(gtk::Align::Center);
+    dots.set_hexpand(true);
     for p in PAGES {
         let d = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         d.add_css_class("installer-dot");
         d.set_tooltip_text(Some(p.title));
         dots.append(&d);
     }
-    outer.append(&dots);
+    top.append(&dots);
+    let outer = w::vbox(0);
 
     let page = w::vbox(0);
     page.add_css_class("installer-page");
@@ -173,6 +175,9 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
     footer.append(&next);
     let footer_clamp = nyx_ui::clamp::Clamp::new(&footer, 600);
     outer.append(&footer_clamp);
+    let frame = nyx_ui::frame::AppFrame::new(&top);
+    frame.set_page(&outer);
+    frame.install(&window);
 
     let time_zones = crate::choices::time_zones();
     let mut choices = Choices::default();

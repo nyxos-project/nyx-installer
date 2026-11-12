@@ -4,8 +4,8 @@ window.installer-window {
   background: @theme_bg;
 }
 
-.installer-dots {
-  margin: 28px 0 0;
+.installer-top {
+  min-height: 46px;
 }
 
 .installer-dot {
