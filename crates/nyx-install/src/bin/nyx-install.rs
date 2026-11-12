@@ -35,7 +35,7 @@ fn main() -> Result<()> {
                 run::Event::Step { index, total, title } => eprintln!("[{}/{total}] {title}", index + 1),
                 run::Event::Line(l) => println!("  {l}"),
                 run::Event::Done => eprintln!("NyxOS is installed. Restart to use it."),
-                run::Event::Failed { title, why } => eprintln!("{title} didn't work: {why}"),
+                run::Event::Failed { title, why } => eprintln!("{title} didn't work: {why}\nEverything it did is in {}.", run::LOG),
             })?;
         }
         _ => bail!("usage: nyx-install disks | plan PLAN.json | run PLAN.json --yes"),

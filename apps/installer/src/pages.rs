@@ -489,18 +489,16 @@ pub fn start(ui: &Rc<Ui>) {
                 Event::Step { index, total, title } => {
                     bar.set_fraction(index as f64 / total as f64);
                     now.set_text(&title);
-                }
-                Event::Line(l) => {
-                    text.push_str(&l);
-                    text.push('\n');
-                    // The last part is enough to see what's happening.
-                    if text.len() > 200_000 {
-                        text.drain(..100_000);
+                    // Details: the steps so far, in the installer's words.
+                    if !text.ends_with(&format!("{title}\n")) {
+                        text.push_str(&title);
+                        text.push('\n');
+                        buffer.set_text(&text);
+                        let mut end = buffer.end_iter();
+                        log.scroll_to_iter(&mut end, 0.0, false, 0.0, 1.0);
                     }
-                    buffer.set_text(&text);
-                    let mut end = buffer.end_iter();
-                    log.scroll_to_iter(&mut end, 0.0, false, 0.0, 1.0);
                 }
+                Event::Line(_) => {}
                 Event::Done => {
                     u.busy.set(false);
                     u.take_over(&done());
@@ -508,7 +506,7 @@ pub fn start(ui: &Rc<Ui>) {
                 }
                 Event::Failed { title, why } => {
                     u.busy.set(false);
-                    u.take_over(&failed(&u, &format!("{title} didn't work: {why}"), &text));
+                    u.take_over(&failed(&u, &format!("{title} didn't work: {why}"), nyx_install::run::LOG));
                     break;
                 }
             }
@@ -530,16 +528,19 @@ fn done() -> gtk::Widget {
     page.upcast()
 }
 
+/// The install stopped: why, in the installer's words, and where the tools' own output is
+/// (`log`, empty before anything ran) for whoever looks into it.
 fn failed(ui: &Rc<Ui>, why: &str, log: &str) -> gtk::Widget {
     let page = w::vbox(16);
     page.append(&heading("The install stopped", why));
     if !log.is_empty() {
-        let view = gtk::TextView::new();
-        view.set_editable(false);
-        view.set_monospace(true);
-        view.buffer().set_text(log);
-        let scroll = gtk::ScrolledWindow::builder().child(&view).min_content_height(260).vexpand(true).build();
-        page.append(&scroll);
+        let note = w::label(
+            &format!("Everything the install did is in {log}. Ctrl+Alt+F2 opens a console where you can read it or copy it to a USB stick."),
+            "installer-lede",
+        );
+        note.set_wrap(true);
+        note.set_xalign(0.0);
+        page.append(&note);
     }
     let again = gtk::Button::with_label("Back to the review");
     again.set_halign(gtk::Align::Start);

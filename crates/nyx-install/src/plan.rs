@@ -335,6 +335,10 @@ impl Plan {
             &["nixos-enter", "--root", ROOT, "-c", "chpasswd"],
             format!("{}:{}\n", self.person.login, self.person.password),
         ));
+        s.push(run(
+            "Keeping the install's log",
+            &["sh", "-c", &format!("mkdir -p {ROOT}/var/log && cp {} {ROOT}/var/log/nyxos-install.log", crate::run::LOG)],
+        ));
         s.push(run("Finishing", &["umount", "--recursive", ROOT]));
         if self.passphrase.is_some() {
             s.push(run("Finishing", &["cryptsetup", "close", "cryptroot"]));
