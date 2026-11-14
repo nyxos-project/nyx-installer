@@ -239,6 +239,30 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
                 u.update();
             }
         });
+        // An install that didn't finish took the free space: offer it back.
+        let leftovers = d.nyxos_leftovers();
+        if !leftovers.is_empty() {
+            let size: u64 = leftovers.iter().map(|p| p.size).sum();
+            let remove = gtk::Button::with_label("Remove them");
+            remove.set_valign(gtk::Align::Center);
+            let (u, disk) = (ui.clone(), d.clone());
+            remove.connect_clicked(move |_| {
+                if let Err(e) = remove_leftovers(&disk) {
+                    *u.disks_error.borrow_mut() = Some(e);
+                }
+                u.load_disks();
+                u.rebuild();
+            });
+            g.append(&w::row(
+                "An earlier install didn't finish",
+                &format!(
+                    "It left NyxOS's partitions here ({}). Removing them gives the space back for NyxOS{}; nothing else is touched.",
+                    human(size),
+                    if d.windows() { ", beside Windows" } else { "" }
+                ),
+                Some(remove.upcast_ref()),
+            ));
+        }
         let beside_text = match (gap, d.windows()) {
             (Some(g), true) => format!("NyxOS uses the {} free; Windows stays as it is, and the boot menu offers both.", human(g.bytes)),
             (Some(g), false) => format!("NyxOS uses the {} free; what's on the disk stays.", human(g.bytes)),
@@ -259,6 +283,12 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
             Some(erase.upcast_ref()),
         ));
         page.append(&g);
+        if d.bitlocker() && c.mode == Mode::Alongside {
+            page.append(&w::banner(
+                "Windows on this disk uses BitLocker. Have its recovery key at hand before you go on (your Microsoft account at aka.ms/myrecoverykey, or the copy you printed or saved): changing Secure Boot to start this USB stick, or the new boot menu, can make Windows ask for it the next time it starts.",
+                false,
+            ));
+        }
 
         let g = group("Encryption");
         let u = ui.clone();
@@ -569,12 +599,49 @@ fn failed(ui: &Rc<Ui>, why: &str, log: &str) -> gtk::Widget {
     again.set_halign(gtk::Align::Start);
     let u = ui.clone();
     again.connect_clicked(move |_| {
-        // Whatever the install left mounted or open goes first.
-        let _ = std::process::Command::new("umount").args(["--recursive", nyx_install::plan::ROOT]).status();
-        let _ = std::process::Command::new("cryptsetup").args(["close", "cryptroot"]).status();
+        release_mounts();
         u.load_disks();
         u.show(PAGES.len() - 1);
     });
     page.append(&again);
+    // Beside another system, what the install made would keep the free space: offer to
+    // take it away now, so the next try (or Windows) has it back.
+    let chosen = ui.choices.borrow().disk.clone();
+    let alongside = ui.choices.borrow().mode == Mode::Alongside;
+    if alongside && let Some(path) = chosen {
+        let remove = gtk::Button::with_label("Remove what this install made");
+        remove.set_halign(gtk::Align::Start);
+        let u = ui.clone();
+        remove.connect_clicked(move |_| {
+            release_mounts();
+            u.load_disks();
+            let disk = u.disks.borrow().iter().find(|d| d.path == path).cloned();
+            if let Some(disk) = disk
+                && let Err(e) = remove_leftovers(&disk)
+            {
+                *u.disks_error.borrow_mut() = Some(e);
+            }
+            u.load_disks();
+            u.show(PAGES.iter().position(|p| p.page == Page::Disk).unwrap_or(0));
+        });
+        page.append(&remove);
+    }
     page.upcast()
+}
+
+/// Whatever an install left mounted or open.
+fn release_mounts() {
+    let _ = std::process::Command::new("umount").args(["--recursive", nyx_install::plan::ROOT]).status();
+    let _ = std::process::Command::new("cryptsetup").args(["close", "cryptroot"]).status();
+}
+
+/// Take away the partitions an unfinished install left on `disk` (only the installer's own).
+fn remove_leftovers(disk: &nyx_install::disks::Disk) -> Result<(), String> {
+    for cmd in nyx_install::plan::leftover_removal(disk) {
+        let out = std::process::Command::new(&cmd[0]).args(&cmd[1..]).output().map_err(|e| format!("{}: {e}", cmd[0]))?;
+        if !out.status.success() {
+            return Err(format!("{} failed: {}", cmd[0], String::from_utf8_lossy(&out.stderr).trim()));
+        }
+    }
+    Ok(())
 }

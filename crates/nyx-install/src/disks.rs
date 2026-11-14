@@ -16,6 +16,9 @@ pub struct Partition {
     pub size: u64,
     pub fstype: String,
     pub label: String,
+    /// The GPT partition's name (`NyxOS EFI`, `NyxOS` for the installer's own).
+    #[serde(default)]
+    pub partlabel: String,
     /// The GPT partition type GUID, lowercase.
     pub parttype: String,
     /// The GPT partition's own GUID (PARTUUID), lowercase.
@@ -33,7 +36,16 @@ impl Partition {
         [MS_BASIC_DATA, MS_RESERVED, MS_RECOVERY].contains(&self.parttype.as_str()) && self.fstype != "vfat"
             || matches!(self.fstype.as_str(), "ntfs" | "BitLocker")
     }
+
+    /// One the installer makes: it names them `NyxOS EFI` and `NyxOS`.
+    pub fn is_nyxos(&self) -> bool {
+        matches!(self.partlabel.as_str(), NYXOS_EFI_NAME | NYXOS_ROOT_NAME)
+    }
 }
+
+/// The names the installer gives its partitions.
+pub const NYXOS_EFI_NAME: &str = "NyxOS EFI";
+pub const NYXOS_ROOT_NAME: &str = "NyxOS";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Gap {
@@ -41,6 +53,9 @@ pub struct Gap {
     pub start: u64,
     pub sectors: u64,
     pub bytes: u64,
+    /// The disk's logical sector size in bytes (512, or 4096 on a 4Kn disk).
+    #[serde(default = "sector")]
+    pub sector_size: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -63,6 +78,19 @@ pub struct Disk {
 impl Disk {
     pub fn windows(&self) -> bool {
         self.partitions.iter().any(Partition::is_windows)
+    }
+
+    /// Windows' data is encrypted with BitLocker: changing Secure Boot or the boot entries
+    /// can make it ask for its recovery key.
+    pub fn bitlocker(&self) -> bool {
+        self.partitions.iter().any(|p| p.fstype == "BitLocker")
+    }
+
+    /// What an install that didn't finish left beside another system: the installer's own
+    /// partitions, where there's something else on the disk to keep.
+    pub fn nyxos_leftovers(&self) -> Vec<&Partition> {
+        let ours: Vec<&Partition> = self.partitions.iter().filter(|p| p.is_nyxos()).collect();
+        if ours.len() < self.partitions.len() { ours } else { Vec::new() }
     }
 
     /// The EFI partition holding Windows Boot Manager, by its partition GUID.
@@ -111,6 +139,8 @@ struct Block {
     #[serde(default)]
     parttype: Option<String>,
     #[serde(default)]
+    partlabel: Option<String>,
+    #[serde(default)]
     partuuid: Option<String>,
     #[serde(default)]
     mountpoints: Vec<Option<String>>,
@@ -122,7 +152,7 @@ fn mounted(b: &Block) -> bool {
     b.mountpoints.iter().flatten().next().is_some() || b.children.iter().any(mounted)
 }
 
-/// Disks from `lsblk --json --tree --bytes -o PATH,TYPE,SIZE,MODEL,TRAN,RM,RO,PTTYPE,FSTYPE,LABEL,PARTTYPE,PARTUUID,MOUNTPOINTS`:
+/// Disks from `lsblk --json --tree --bytes -o PATH,TYPE,SIZE,MODEL,TRAN,RM,RO,PTTYPE,FSTYPE,LABEL,PARTLABEL,PARTTYPE,PARTUUID,MOUNTPOINTS`:
 /// whole writable disks, not loop devices, CD-ROMs or zram.
 pub fn parse_lsblk(json: &str) -> Result<Vec<Disk>> {
     let l: Lsblk = serde_json::from_str(json).context("lsblk printed something unexpected")?;
@@ -145,6 +175,7 @@ pub fn parse_lsblk(json: &str) -> Result<Vec<Disk>> {
                     size: c.size.unwrap_or(0),
                     fstype: c.fstype.clone().unwrap_or_default(),
                     label: c.label.clone().unwrap_or_default(),
+                    partlabel: c.partlabel.clone().unwrap_or_default(),
                     parttype: c.parttype.clone().unwrap_or_default().to_lowercase(),
                     partuuid: c.partuuid.clone().unwrap_or_default().to_lowercase(),
                     mounted: mounted(c),
@@ -209,7 +240,7 @@ pub fn largest_gap(sfdisk_json: &str) -> Option<Gap> {
         })
         .filter(|(_, n)| n * t.sectorsize >= 1 << 30)
         .max_by_key(|(_, n)| *n)
-        .map(|(start, sectors)| Gap { start, sectors, bytes: sectors * t.sectorsize })
+        .map(|(start, sectors)| Gap { start, sectors, bytes: sectors * t.sectorsize, sector_size: t.sectorsize })
 }
 
 fn output(args: &[&str]) -> Result<String> {
@@ -226,7 +257,7 @@ pub fn list() -> Result<Vec<Disk>> {
         "--tree",
         "--bytes",
         "-o",
-        "PATH,TYPE,SIZE,MODEL,TRAN,RM,RO,PTTYPE,FSTYPE,LABEL,PARTTYPE,PARTUUID,MOUNTPOINTS",
+        "PATH,TYPE,SIZE,MODEL,TRAN,RM,RO,PTTYPE,FSTYPE,LABEL,PARTLABEL,PARTTYPE,PARTUUID,MOUNTPOINTS",
     ])?;
     let mut disks = parse_lsblk(&json)?;
     for d in &mut disks {
@@ -278,5 +309,32 @@ mod tests {
         // An empty disk is all gap.
         let empty = r#"{"partitiontable":{"firstlba":34,"lastlba":4194270,"sectorsize":512}}"#;
         assert_eq!(largest_gap(empty).unwrap().start, 2048);
+        // A 4Kn disk counts in 4096-byte sectors: 1 MiB is 256 of them.
+        let kn = r#"{"partitiontable":{"firstlba":6,"lastlba":250069670,"sectorsize":4096,"partitions":[{"start":256,"size":25600}]}}"#;
+        let g = largest_gap(kn).unwrap();
+        assert_eq!((g.start % 256, g.sector_size), (0, 4096));
+        assert_eq!(g.bytes, g.sectors * 4096);
+    }
+
+    #[test]
+    fn what_a_failed_install_left_beside_windows() {
+        let mut d = parse_lsblk(LSBLK).unwrap().remove(0);
+        assert!(d.bitlocker());
+        assert!(d.nyxos_leftovers().is_empty());
+        for (n, name) in [(4, NYXOS_EFI_NAME), (5, NYXOS_ROOT_NAME)] {
+            d.partitions.push(Partition {
+                path: format!("/dev/nvme0n1p{n}"),
+                size: 1 << 30,
+                fstype: String::new(),
+                label: String::new(),
+                partlabel: name.into(),
+                parttype: String::new(),
+                partuuid: String::new(),
+                mounted: false,
+            });
+        }
+        assert_eq!(d.nyxos_leftovers().iter().map(|p| p.path.as_str()).collect::<Vec<_>>(), ["/dev/nvme0n1p4", "/dev/nvme0n1p5"]);
+        d.partitions.retain(Partition::is_nyxos);
+        assert!(d.nyxos_leftovers().is_empty(), "a disk that's all NyxOS has nothing else to keep");
     }
 }

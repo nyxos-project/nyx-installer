@@ -3,7 +3,7 @@
 //! Windows nothing of Windows' is written to (NyxOS gets its own EFI partition, and Limine
 //! starts Windows Boot Manager from Windows').
 
-use crate::disks::{Disk, ESP_TYPE};
+use crate::disks::{Disk, ESP_TYPE, NYXOS_EFI_NAME, NYXOS_ROOT_NAME};
 use anyhow::{Result, bail, ensure};
 use nyx_system_proto::SystemSettings;
 use nyx_system_proto::hardware::Hardware;
@@ -21,8 +21,19 @@ const EFI_SIZE: u64 = 1 << 30;
 pub enum Target {
     /// Everything on the disk goes.
     Erase { disk: String },
-    /// Into free space (sectors), beside what's there.
-    Alongside { disk: String, start: u64, sectors: u64 },
+    /// Into free space (in the disk's sectors), beside what's there.
+    Alongside {
+        disk: String,
+        start: u64,
+        sectors: u64,
+        /// Bytes per sector: 512, or 4096 on a 4Kn disk.
+        #[serde(default = "default_sector_size")]
+        sector_size: u64,
+    },
+}
+
+fn default_sector_size() -> u64 {
+    512
 }
 
 impl Target {
@@ -97,6 +108,28 @@ pub fn guid() -> String {
     std::fs::read_to_string("/proc/sys/kernel/random/uuid").unwrap_or_default().trim().to_lowercase()
 }
 
+/// The commands that take away what an install that didn't finish left beside another
+/// system: the installer's own partitions (by their names), nothing else.
+pub fn leftover_removal(disk: &Disk) -> Vec<Vec<String>> {
+    let numbers: Vec<String> = disk
+        .nyxos_leftovers()
+        .iter()
+        .filter_map(|p| p.path.rsplit(|c: char| !c.is_ascii_digit()).next().filter(|n| !n.is_empty()).map(String::from))
+        .collect();
+    if numbers.is_empty() {
+        return Vec::new();
+    }
+    let mut sgdisk = vec!["sgdisk".to_string()];
+    sgdisk.extend(numbers.iter().map(|n| format!("--delete={n}")));
+    sgdisk.push(disk.path.clone());
+    vec![
+        vec!["wipefs".into(), "--all".into()].into_iter().chain(disk.nyxos_leftovers().iter().map(|p| p.path.clone())).collect(),
+        sgdisk,
+        vec!["partprobe".into(), disk.path.clone()],
+        vec!["udevadm".into(), "settle".into(), "--timeout=30".into()],
+    ]
+}
+
 /// A Nix string literal.
 fn nix_str(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"").replace("${", "\\${"))
@@ -162,9 +195,10 @@ impl Plan {
         }
         match &self.target {
             Target::Erase { .. } => ensure!(disk.size >= 32 << 30, "NyxOS needs at least 32 GB"),
-            Target::Alongside { sectors, .. } => {
+            Target::Alongside { sectors, sector_size, .. } => {
                 ensure!(disk.table == "gpt", "installing beside another system needs a GPT disk");
-                ensure!(sectors * 512 >= 32 << 30, "NyxOS needs at least 32 GB of free space")
+                ensure!([512, 4096].contains(sector_size), "a sector is 512 or 4096 bytes, not {sector_size}");
+                ensure!(sectors * sector_size >= 32 << 30, "NyxOS needs at least 32 GB of free space")
             }
         }
         Ok(())
@@ -207,8 +241,8 @@ impl Plan {
                 s.push(run("Making a new partition table", &["sgdisk", "--zap-all", d]));
                 (1, 2, "0:+1G".to_string(), "0:0".to_string())
             }
-            Target::Alongside { start, sectors, .. } => {
-                let efi_end = start + EFI_SIZE / 512 - 1;
+            Target::Alongside { start, sectors, sector_size, .. } => {
+                let efi_end = start + EFI_SIZE / sector_size - 1;
                 let (ne, nr) = Self::numbers(disk);
                 (ne, nr, format!("{start}:{efi_end}"), format!("{}:{}", efi_end + 1, start + sectors - 1))
             }
@@ -221,11 +255,11 @@ impl Plan {
                 &format!("--new={}", n(ne, &efi_range)),
                 &format!("--typecode={}", n(ne, ESP_TYPE)),
                 &format!("--partition-guid={}", n(ne, &self.efi_guid)),
-                &format!("--change-name={}", n(ne, "NyxOS EFI")),
+                &format!("--change-name={}", n(ne, NYXOS_EFI_NAME)),
                 &format!("--new={}", n(nr, &root_range)),
                 &format!("--typecode={}", n(nr, root_type)),
                 &format!("--partition-guid={}", n(nr, &self.root_guid)),
-                &format!("--change-name={}", n(nr, "NyxOS")),
+                &format!("--change-name={}", n(nr, NYXOS_ROOT_NAME)),
                 d,
             ],
         ));
@@ -486,8 +520,9 @@ impl Plan {
 
 /// The plan for `disk` refused with why, or fine.
 pub fn check(plan: &Plan, disk: &Disk) -> Result<()> {
-    if let Target::Alongside { start, sectors, .. } = &plan.target {
+    if let Target::Alongside { start, sectors, sector_size, .. } = &plan.target {
         let Some(gap) = &disk.free else { bail!("{} has no free space", disk.path) };
+        ensure!(*sector_size == gap.sector_size, "{} has {}-byte sectors, not {sector_size}", disk.path, gap.sector_size);
         ensure!(*start >= gap.start && start + sectors <= gap.start + gap.sectors, "that isn't the free space on {}", disk.path);
     }
     plan.validate(disk)
@@ -504,6 +539,7 @@ mod tests {
             size: 1 << 30,
             fstype: fs.into(),
             label: String::new(),
+            partlabel: String::new(),
             parttype: t.into(),
             partuuid: format!("aaaaaaaa-0000-0000-0000-00000000000{n}"),
             mounted: false,
@@ -524,7 +560,7 @@ mod tests {
             } else {
                 vec![]
             },
-            free: Some(Gap { start: 1_000_000_000, sectors: 900_000_000, bytes: 900_000_000 * 512 }),
+            free: Some(Gap { start: 1_000_000_000, sectors: 900_000_000, bytes: 900_000_000 * 512, sector_size: 512 }),
             busy: false,
         }
     }
@@ -595,7 +631,7 @@ mod tests {
 
     #[test]
     fn beside_windows_nothing_of_windows_is_touched() {
-        let mut p = plan(Target::Alongside { disk: "/dev/nvme0n1".into(), start: 1_000_000_000, sectors: 900_000_000 });
+        let mut p = plan(Target::Alongside { disk: "/dev/nvme0n1".into(), start: 1_000_000_000, sectors: 900_000_000, sector_size: 512 });
         p.passphrase = None;
         p.windows_esp = Some("aaaaaaaa-0000-0000-0000-000000000001".into());
         let d = disk(true);
@@ -611,8 +647,44 @@ mod tests {
         assert!(p.host_nix().contains("boot.windows = \"aaaaaaaa-0000-0000-0000-000000000001\";"));
         check(&p, &d).unwrap();
         let mut outside = p.clone();
-        outside.target = Target::Alongside { disk: "/dev/nvme0n1".into(), start: 10, sectors: 900_000_000 };
+        outside.target = Target::Alongside { disk: "/dev/nvme0n1".into(), start: 10, sectors: 900_000_000, sector_size: 512 };
         assert!(check(&outside, &d).is_err());
+    }
+
+    #[test]
+    fn a_4kn_disk_counts_in_4096_byte_sectors() {
+        let mut d = disk(true);
+        // 900 GB of free space is 219,726,562 sectors of 4096 bytes.
+        d.free = Some(Gap { start: 250_000_000, sectors: 219_726_562, bytes: 219_726_562 * 4096, sector_size: 4096 });
+        let mut p = plan(Target::Alongside { disk: d.path.clone(), start: 250_000_000, sectors: 219_726_562, sector_size: 4096 });
+        p.passphrase = None;
+        let text = Plan::describe(&p.steps(&d).unwrap());
+        // 1 GiB of EFI partition is 262,144 sectors here, not 2,097,152.
+        assert!(text.contains("--new=4:250000000:250262143"), "{text}");
+        check(&p, &d).unwrap();
+        let mut wrong = p.clone();
+        wrong.target = Target::Alongside { disk: d.path.clone(), start: 250_000_000, sectors: 219_726_562, sector_size: 512 };
+        assert!(check(&wrong, &d).is_err(), "the disk's own sector size");
+        // 32 GB counted in 4096-byte sectors, not 512.
+        let mut small = p.clone();
+        small.target = Target::Alongside { disk: d.path.clone(), start: 250_000_000, sectors: 8_400_000, sector_size: 4096 };
+        small.validate(&d).unwrap();
+    }
+
+    #[test]
+    fn only_the_installers_own_partitions_are_taken_away() {
+        let mut d = disk(true);
+        assert!(leftover_removal(&d).is_empty());
+        for (n, name) in [(4, NYXOS_EFI_NAME), (5, NYXOS_ROOT_NAME)] {
+            let mut p = d.partitions[0].clone();
+            p.path = format!("/dev/nvme0n1p{n}");
+            p.partlabel = name.into();
+            d.partitions.push(p);
+        }
+        let cmds: Vec<String> = leftover_removal(&d).iter().map(|c| c.join(" ")).collect();
+        assert_eq!(cmds[0], "wipefs --all /dev/nvme0n1p4 /dev/nvme0n1p5");
+        assert_eq!(cmds[1], "sgdisk --delete=4 --delete=5 /dev/nvme0n1");
+        assert!(cmds.iter().all(|c| !c.contains("p1") && !c.contains("p3")), "Windows' stay");
     }
 
     #[test]

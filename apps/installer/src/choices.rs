@@ -230,7 +230,9 @@ fn memory_gib() -> u32 {
 
 pub fn plan(c: &Choices, disk: &Disk) -> Plan {
     let target = match (c.mode, &disk.free) {
-        (Mode::Alongside, Some(g)) => Target::Alongside { disk: disk.path.clone(), start: g.start, sectors: g.sectors },
+        (Mode::Alongside, Some(g)) => {
+            Target::Alongside { disk: disk.path.clone(), start: g.start, sectors: g.sectors, sector_size: g.sector_size }
+        }
         _ => Target::Erase { disk: disk.path.clone() },
     };
     let windows_esp = (c.mode == Mode::Alongside).then(|| disk.windows_esp().map(|p| p.partuuid.clone())).flatten();
