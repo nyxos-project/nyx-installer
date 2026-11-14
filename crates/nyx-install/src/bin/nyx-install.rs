@@ -46,6 +46,9 @@ fn main() -> Result<()> {
             let disk = disks::list()?.into_iter().find(|d| d.path == *path).with_context(|| format!("there's no disk {path}"))?;
             let cmds = nyx_install::plan::leftover_removal(&disk);
             anyhow::ensure!(!cmds.is_empty(), "{path} has nothing an unfinished install left");
+            // What the install left mounted or open holds its partitions.
+            let _ = std::process::Command::new("umount").args(["--recursive", nyx_install::plan::ROOT]).status();
+            let _ = std::process::Command::new("cryptsetup").args(["close", "cryptroot"]).status();
             for cmd in cmds {
                 eprintln!("$ {}", cmd.join(" "));
                 let status = std::process::Command::new(&cmd[0]).args(&cmd[1..]).status().with_context(|| format!("can't run {}", cmd[0]))?;
