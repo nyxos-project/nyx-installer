@@ -224,6 +224,17 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
     ui.window.add_controller(keys);
     let u = ui.clone();
     window.connect_close_request(move |_| if u.busy.get() { glib::Propagation::Stop } else { glib::Propagation::Proceed });
-    ui.show(0);
+    // Screenshots: NYX_INSTALLER_TEST_DISK=/dev/… opens the disk page with that disk chosen.
+    match std::env::var("NYX_INSTALLER_TEST_DISK").ok().filter(|d| ui.disks.borrow().iter().any(|x| &x.path == d)) {
+        Some(disk) => {
+            {
+                let mut c = ui.choices.borrow_mut();
+                c.disk = Some(disk);
+                c.mode = crate::choices::Mode::Alongside;
+            }
+            ui.show(PAGES.iter().position(|p| p.page == Page::Disk).unwrap_or(0));
+        }
+        None => ui.show(0),
+    }
     ui
 }
