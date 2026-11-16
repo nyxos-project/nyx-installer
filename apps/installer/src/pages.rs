@@ -41,11 +41,12 @@ pub fn build(ui: &Rc<Ui>, page: Page) -> gtk::Widget {
 pub fn problem(ui: &Ui, page: Page) -> Option<String> {
     let c = ui.choices.borrow();
     match page {
-        Page::Welcome => None,
+        Page::Welcome => (!nyx_install::plan::firmware_is_uefi()).then(|| nyx_install::plan::BIOS_MODE.into()),
         Page::Disk => choices::disk_problem(&c, &ui.disks.borrow()),
         Page::You => choices::person_problem(&c),
         Page::Review => {
             let d = choices::disk_problem(&c, &ui.disks.borrow()).or_else(|| choices::person_problem(&c));
+            let d = d.or_else(|| (!nyx_install::plan::firmware_is_uefi()).then(|| nyx_install::plan::BIOS_MODE.into()));
             d.or_else(|| (c.mode == Mode::Erase && !c.erase_confirmed).then(|| "Confirm that the disk is erased.".into()))
                 .or_else(|| (unsafe { libc_geteuid() } != 0).then(|| "The installer has to run as root.".into()))
         }
@@ -117,6 +118,9 @@ fn dropdown(items: &[(String, String)], current: &str, on: impl Fn(String) + 'st
 fn welcome(ui: &Rc<Ui>) -> gtk::Widget {
     let page = w::vbox(18);
     page.append(&heading("Install NyxOS", "A few questions first. Nothing on this computer changes until you choose Install."));
+    if !nyx_install::plan::firmware_is_uefi() {
+        page.append(&w::banner(nyx_install::plan::BIOS_MODE, true));
+    }
     let c = ui.choices.borrow().clone();
     let g = group("");
     let pairs = |l: &[(&str, &str)]| l.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
@@ -239,6 +243,13 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
                 u.update();
             }
         });
+        if d.nyxos_installed() {
+            g.append(&w::row(
+                "NyxOS is installed here",
+                "Erasing the disk replaces it and everything on it. Installing in the free space adds a second NyxOS beside it.",
+                None,
+            ));
+        }
         // An install that didn't finish took the free space: offer it back.
         let leftovers = d.nyxos_leftovers();
         if !leftovers.is_empty() {
@@ -246,12 +257,15 @@ fn disk(ui: &Rc<Ui>) -> gtk::Widget {
             let remove = gtk::Button::with_label("Remove them");
             remove.set_valign(gtk::Align::Center);
             let (u, disk) = (ui.clone(), d.clone());
-            remove.connect_clicked(move |_| {
-                if let Err(e) = remove_leftovers(&disk) {
-                    *u.disks_error.borrow_mut() = Some(e);
-                }
-                u.load_disks();
-                u.rebuild();
+            remove.connect_clicked(move |b| {
+                let (u, disk) = (u.clone(), disk.clone());
+                confirm_removal(b, &disk.clone(), move || {
+                    if let Err(e) = remove_leftovers(&disk) {
+                        *u.disks_error.borrow_mut() = Some(e);
+                    }
+                    u.load_disks();
+                    u.rebuild();
+                });
             });
             g.append(&w::row(
                 "An earlier install didn't finish",
@@ -344,7 +358,10 @@ fn entry(text: &str, on: impl Fn(String) + 'static) -> gtk::Entry {
 
 fn you(ui: &Rc<Ui>) -> gtk::Widget {
     let page = w::vbox(18);
-    page.append(&heading("You and this computer", "Your account, which can change settings for everyone, and the computer's name."));
+    page.append(&heading(
+        "You and this computer",
+        "Your account, which can change settings for everyone, and the computer's name.",
+    ));
     let c = ui.choices.borrow().clone();
     let g = group("You");
     let login = entry(&c.login, {
@@ -404,11 +421,7 @@ fn you(ui: &Rc<Ui>) -> gtk::Widget {
             drop(c);
             u.update();
         });
-        g.append(&w::row(
-            title,
-            "",
-            Some(e.upcast_ref()),
-        ));
+        g.append(&w::row(title, "", Some(e.upcast_ref())));
     }
     page.append(&g);
     g.append(&w::row("Computer's name", "How it shows on your network.", Some(host.upcast_ref())));
@@ -497,7 +510,7 @@ pub fn start(ui: &Rc<Ui>) {
     let disks = ui.disks.borrow().clone();
     let Some(disk) = c.disk.as_ref().and_then(|p| disks.iter().find(|d| &d.path == p)).cloned() else { return };
     let plan = choices::plan(&c, &disk);
-    let steps = match nyx_install::plan::check(&plan, &disk).and_then(|_| plan.steps(&disk)) {
+    let steps = match nyx_install::plan::check_here(&plan, &disk).and_then(|_| plan.steps(&disk)) {
         Ok(s) => s,
         Err(e) => {
             ui.take_over(&failed(ui, &format!("{e:#}"), ""));
@@ -588,7 +601,9 @@ fn failed(ui: &Rc<Ui>, why: &str, log: &str) -> gtk::Widget {
     page.append(&heading("The install stopped", why));
     if !log.is_empty() {
         let note = w::label(
-            &format!("Everything the install did is in {log}. Ctrl+Alt+F2 opens a console where you can read it or copy it to a USB stick."),
+            &format!(
+                "Everything the install did is in {log}. Ctrl+Alt+F2 opens a console where you can read it or copy it to a USB stick."
+            ),
             "installer-lede",
         );
         note.set_wrap(true);
@@ -612,17 +627,23 @@ fn failed(ui: &Rc<Ui>, why: &str, log: &str) -> gtk::Widget {
         let remove = gtk::Button::with_label("Remove what this install made");
         remove.set_halign(gtk::Align::Start);
         let u = ui.clone();
-        remove.connect_clicked(move |_| {
+        remove.connect_clicked(move |b| {
             release_mounts();
             u.load_disks();
             let disk = u.disks.borrow().iter().find(|d| d.path == path).cloned();
-            if let Some(disk) = disk
-                && let Err(e) = remove_leftovers(&disk)
-            {
-                *u.disks_error.borrow_mut() = Some(e);
-            }
-            u.load_disks();
-            u.show(PAGES.iter().position(|p| p.page == Page::Disk).unwrap_or(0));
+            let to_disk_page = |u: &Rc<Ui>| u.show(PAGES.iter().position(|p| p.page == Page::Disk).unwrap_or(0));
+            let Some(disk) = disk.filter(|d| !d.nyxos_leftovers().is_empty()) else {
+                to_disk_page(&u);
+                return;
+            };
+            let u = u.clone();
+            confirm_removal(b, &disk.clone(), move || {
+                if let Err(e) = remove_leftovers(&disk) {
+                    *u.disks_error.borrow_mut() = Some(e);
+                }
+                u.load_disks();
+                to_disk_page(&u);
+            });
         });
         page.append(&remove);
     }
@@ -633,6 +654,26 @@ fn failed(ui: &Rc<Ui>, why: &str, log: &str) -> gtk::Widget {
 fn release_mounts() {
     let _ = std::process::Command::new("umount").args(["--recursive", nyx_install::plan::ROOT]).status();
     let _ = std::process::Command::new("cryptsetup").args(["close", "cryptroot"]).status();
+}
+
+/// Ask before removing: name each partition and its size.
+fn confirm_removal(anchor: &impl IsA<gtk::Widget>, disk: &nyx_install::disks::Disk, then: impl Fn() + 'static) {
+    let list: Vec<String> =
+        disk.nyxos_leftovers().iter().map(|p| format!("{} ({}, {})", p.path, p.partlabel, human(p.size))).collect();
+    let dialog = gtk::AlertDialog::builder()
+        .modal(true)
+        .message("Remove the unfinished install's partitions?")
+        .detail(format!("These are erased and deleted:\n{}\n\nNothing else on {} is touched.", list.join("\n"), disk.path))
+        .buttons(["Cancel", "Remove"])
+        .cancel_button(0)
+        .default_button(0)
+        .build();
+    let window = anchor.root().and_downcast::<gtk::Window>();
+    dialog.choose(window.as_ref(), None::<&gtk::gio::Cancellable>, move |r| {
+        if r == Ok(1) {
+            then();
+        }
+    });
 }
 
 /// Take away the partitions an unfinished install left on `disk` (only the installer's own).

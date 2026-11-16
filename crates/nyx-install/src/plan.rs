@@ -3,7 +3,7 @@
 //! Windows nothing of Windows' is written to (NyxOS gets its own EFI partition, and Limine
 //! starts Windows Boot Manager from Windows').
 
-use crate::disks::{Disk, ESP_TYPE, NYXOS_EFI_NAME, NYXOS_ROOT_NAME};
+use crate::disks::{Disk, ESP_TYPE, NYXOS_EFI_INSTALLING, NYXOS_EFI_NAME, NYXOS_ROOT_INSTALLING, NYXOS_ROOT_NAME};
 use anyhow::{Result, bail, ensure};
 use nyx_system_proto::SystemSettings;
 use nyx_system_proto::hardware::Hardware;
@@ -255,11 +255,11 @@ impl Plan {
                 &format!("--new={}", n(ne, &efi_range)),
                 &format!("--typecode={}", n(ne, ESP_TYPE)),
                 &format!("--partition-guid={}", n(ne, &self.efi_guid)),
-                &format!("--change-name={}", n(ne, NYXOS_EFI_NAME)),
+                &format!("--change-name={}", n(ne, NYXOS_EFI_INSTALLING)),
                 &format!("--new={}", n(nr, &root_range)),
                 &format!("--typecode={}", n(nr, root_type)),
                 &format!("--partition-guid={}", n(nr, &self.root_guid)),
-                &format!("--change-name={}", n(nr, NYXOS_ROOT_NAME)),
+                &format!("--change-name={}", n(nr, NYXOS_ROOT_INSTALLING)),
                 d,
             ],
         ));
@@ -398,6 +398,17 @@ impl Plan {
         if self.passphrase.is_some() {
             s.push(run("Finishing", &["cryptsetup", "close", "cryptroot"]));
         }
+        // Last: the partitions get their real names, so only an install that didn't get
+        // here is offered for removal later.
+        s.push(run(
+            "Finishing",
+            &[
+                "sgdisk",
+                &format!("--change-name={}", n(ne, NYXOS_EFI_NAME)),
+                &format!("--change-name={}", n(nr, NYXOS_ROOT_NAME)),
+                d,
+            ],
+        ));
         Ok(s)
     }
 
@@ -518,6 +529,22 @@ impl Plan {
     }
 }
 
+/// This computer started in UEFI mode. NyxOS installs only on UEFI; a live USB started in
+/// BIOS (legacy, CSM) mode would erase the disk and then fail at the boot loader.
+pub fn firmware_is_uefi() -> bool {
+    std::path::Path::new("/sys/firmware/efi").is_dir()
+}
+
+pub const BIOS_MODE: &str = "This computer started the USB stick in BIOS mode, and NyxOS installs only in UEFI mode. \
+Restart, open the computer's boot menu and choose the entry for the USB stick that starts with \"UEFI\", \
+or turn off Legacy/CSM boot in its firmware settings.";
+
+/// [`check`] on the computer it runs on: also refused when it didn't start in UEFI mode.
+pub fn check_here(plan: &Plan, disk: &Disk) -> Result<()> {
+    ensure!(firmware_is_uefi(), "{BIOS_MODE}");
+    check(plan, disk)
+}
+
 /// The plan for `disk` refused with why, or fine.
 pub fn check(plan: &Plan, disk: &Disk) -> Result<()> {
     if let Target::Alongside { start, sectors, sector_size, .. } = &plan.target {
@@ -608,7 +635,9 @@ mod tests {
         assert!(
             text.contains("sed -i s#\"/mnt/etc/nyxos/overrides\"#\"/etc/nyxos/overrides\"# /mnt/etc/nyxos/flake/flake.lock\n")
         );
-        assert!(text.ends_with("umount --recursive /mnt\ncryptsetup close cryptroot"));
+        assert!(text.ends_with(
+            "umount --recursive /mnt\ncryptsetup close cryptroot\nsgdisk --change-name=1:NyxOS EFI --change-name=2:NyxOS /dev/nvme0n1"
+        ));
         assert!(!text.contains("correct horse") && !text.contains("hunter22"), "secrets never show");
         let Step::Run { input, .. } =
             steps.iter().find(|s| matches!(s, Step::Run { title, .. } if title == "Setting your password")).unwrap()
@@ -631,7 +660,8 @@ mod tests {
 
     #[test]
     fn beside_windows_nothing_of_windows_is_touched() {
-        let mut p = plan(Target::Alongside { disk: "/dev/nvme0n1".into(), start: 1_000_000_000, sectors: 900_000_000, sector_size: 512 });
+        let mut p =
+            plan(Target::Alongside { disk: "/dev/nvme0n1".into(), start: 1_000_000_000, sectors: 900_000_000, sector_size: 512 });
         p.passphrase = None;
         p.windows_esp = Some("aaaaaaaa-0000-0000-0000-000000000001".into());
         let d = disk(true);
@@ -675,7 +705,7 @@ mod tests {
     fn only_the_installers_own_partitions_are_taken_away() {
         let mut d = disk(true);
         assert!(leftover_removal(&d).is_empty());
-        for (n, name) in [(4, NYXOS_EFI_NAME), (5, NYXOS_ROOT_NAME)] {
+        for (n, name) in [(4, NYXOS_EFI_INSTALLING), (5, NYXOS_ROOT_INSTALLING)] {
             let mut p = d.partitions[0].clone();
             p.path = format!("/dev/nvme0n1p{n}");
             p.partlabel = name.into();
@@ -685,6 +715,24 @@ mod tests {
         assert_eq!(cmds[0], "wipefs --all /dev/nvme0n1p4 /dev/nvme0n1p5");
         assert_eq!(cmds[1], "sgdisk --delete=4 --delete=5 /dev/nvme0n1");
         assert!(cmds.iter().all(|c| !c.contains("p1") && !c.contains("p3")), "Windows' stay");
+        // A finished NyxOS beside them stays too.
+        for p in d.partitions.iter_mut().filter(|p| p.partlabel.ends_with("(installing)")) {
+            p.partlabel = p.partlabel.trim_end_matches(" (installing)").into();
+        }
+        assert!(leftover_removal(&d).is_empty());
+    }
+
+    #[test]
+    fn the_partitions_are_named_only_at_the_end() {
+        let p = plan(Target::Erase { disk: "/dev/nvme0n1".into() });
+        let steps = p.steps(&disk(false)).unwrap();
+        let text = Plan::describe(&steps);
+        assert!(text.contains("--change-name=1:NyxOS EFI (installing)"));
+        assert!(text.contains("--change-name=2:NyxOS (installing)"));
+        assert_eq!(
+            text.trim_end().lines().last().unwrap(),
+            "sgdisk --change-name=1:NyxOS EFI --change-name=2:NyxOS /dev/nvme0n1"
+        );
     }
 
     #[test]

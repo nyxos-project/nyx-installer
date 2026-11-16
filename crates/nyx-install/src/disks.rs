@@ -16,7 +16,8 @@ pub struct Partition {
     pub size: u64,
     pub fstype: String,
     pub label: String,
-    /// The GPT partition's name (`NyxOS EFI`, `NyxOS` for the installer's own).
+    /// The GPT partition's name (`NyxOS EFI`, `NyxOS` for the installer's own; with
+    /// " (installing)" until the install finishes).
     #[serde(default)]
     pub partlabel: String,
     /// The GPT partition type GUID, lowercase.
@@ -37,15 +38,25 @@ impl Partition {
             || matches!(self.fstype.as_str(), "ntfs" | "BitLocker")
     }
 
-    /// One the installer makes: it names them `NyxOS EFI` and `NyxOS`.
-    pub fn is_nyxos(&self) -> bool {
-        matches!(self.partlabel.as_str(), NYXOS_EFI_NAME | NYXOS_ROOT_NAME)
+    /// One the installer made for an install that didn't finish: it names them
+    /// `NyxOS EFI (installing)` and `NyxOS (installing)`, and renames them only as its
+    /// last step.
+    pub fn is_unfinished_nyxos(&self) -> bool {
+        matches!(self.partlabel.as_str(), NYXOS_EFI_INSTALLING | NYXOS_ROOT_INSTALLING)
+    }
+
+    /// A finished install's root partition.
+    pub fn is_installed_nyxos(&self) -> bool {
+        self.partlabel == NYXOS_ROOT_NAME
     }
 }
 
-/// The names the installer gives its partitions.
+/// The names a finished install's partitions have.
 pub const NYXOS_EFI_NAME: &str = "NyxOS EFI";
 pub const NYXOS_ROOT_NAME: &str = "NyxOS";
+/// The names they have while the install runs.
+pub const NYXOS_EFI_INSTALLING: &str = "NyxOS EFI (installing)";
+pub const NYXOS_ROOT_INSTALLING: &str = "NyxOS (installing)";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Gap {
@@ -86,11 +97,17 @@ impl Disk {
         self.partitions.iter().any(|p| p.fstype == "BitLocker")
     }
 
-    /// What an install that didn't finish left beside another system: the installer's own
-    /// partitions, where there's something else on the disk to keep.
+    /// What an install that didn't finish left beside another system: the partitions it
+    /// made, still under their "(installing)" names, where there's something else on the
+    /// disk to keep. A finished NyxOS is never among them.
     pub fn nyxos_leftovers(&self) -> Vec<&Partition> {
-        let ours: Vec<&Partition> = self.partitions.iter().filter(|p| p.is_nyxos()).collect();
+        let ours: Vec<&Partition> = self.partitions.iter().filter(|p| p.is_unfinished_nyxos()).collect();
         if ours.len() < self.partitions.len() { ours } else { Vec::new() }
+    }
+
+    /// A finished NyxOS is on this disk.
+    pub fn nyxos_installed(&self) -> bool {
+        self.partitions.iter().any(Partition::is_installed_nyxos)
     }
 
     /// The EFI partition holding Windows Boot Manager, by its partition GUID.
@@ -316,25 +333,42 @@ mod tests {
         assert_eq!(g.bytes, g.sectors * 4096);
     }
 
+    fn ours(n: u32, name: &str) -> Partition {
+        Partition {
+            path: format!("/dev/nvme0n1p{n}"),
+            size: 1 << 30,
+            fstype: String::new(),
+            label: String::new(),
+            partlabel: name.into(),
+            parttype: String::new(),
+            partuuid: String::new(),
+            mounted: false,
+        }
+    }
+
     #[test]
     fn what_a_failed_install_left_beside_windows() {
         let mut d = parse_lsblk(LSBLK).unwrap().remove(0);
         assert!(d.bitlocker());
         assert!(d.nyxos_leftovers().is_empty());
-        for (n, name) in [(4, NYXOS_EFI_NAME), (5, NYXOS_ROOT_NAME)] {
-            d.partitions.push(Partition {
-                path: format!("/dev/nvme0n1p{n}"),
-                size: 1 << 30,
-                fstype: String::new(),
-                label: String::new(),
-                partlabel: name.into(),
-                parttype: String::new(),
-                partuuid: String::new(),
-                mounted: false,
-            });
-        }
+        d.partitions.push(ours(4, NYXOS_EFI_INSTALLING));
+        d.partitions.push(ours(5, NYXOS_ROOT_INSTALLING));
         assert_eq!(d.nyxos_leftovers().iter().map(|p| p.path.as_str()).collect::<Vec<_>>(), ["/dev/nvme0n1p4", "/dev/nvme0n1p5"]);
-        d.partitions.retain(Partition::is_nyxos);
+        assert!(!d.nyxos_installed());
+        d.partitions.retain(Partition::is_unfinished_nyxos);
         assert!(d.nyxos_leftovers().is_empty(), "a disk that's all NyxOS has nothing else to keep");
+    }
+
+    #[test]
+    fn a_finished_install_beside_windows_is_not_a_leftover() {
+        let mut d = parse_lsblk(LSBLK).unwrap().remove(0);
+        d.partitions.push(ours(4, NYXOS_EFI_NAME));
+        d.partitions.push(ours(5, NYXOS_ROOT_NAME));
+        assert!(d.nyxos_leftovers().is_empty());
+        assert!(d.nyxos_installed());
+        // A finished install and a later one that stopped half way: only the second goes.
+        d.partitions.push(ours(6, NYXOS_EFI_INSTALLING));
+        d.partitions.push(ours(7, NYXOS_ROOT_INSTALLING));
+        assert_eq!(d.nyxos_leftovers().iter().map(|p| p.path.as_str()).collect::<Vec<_>>(), ["/dev/nvme0n1p6", "/dev/nvme0n1p7"]);
     }
 }

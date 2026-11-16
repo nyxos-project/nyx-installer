@@ -17,7 +17,7 @@ fn load(path: &str) -> Result<(Plan, disks::Disk)> {
         .into_iter()
         .find(|d| d.path == plan.target.disk())
         .with_context(|| format!("there's no disk {}", plan.target.disk()))?;
-    nyx_install::plan::check(&plan, &disk)?;
+    nyx_install::plan::check_here(&plan, &disk)?;
     Ok((plan, disk))
 }
 
@@ -38,7 +38,9 @@ fn main() -> Result<()> {
                 run::Event::Step { index, total, title } => eprintln!("[{}/{total}] {title}", index + 1),
                 run::Event::Line(l) => println!("  {l}"),
                 run::Event::Done => eprintln!("NyxOS is installed. Restart to use it."),
-                run::Event::Failed { title, why } => eprintln!("{title} didn't work: {why}\nEverything it did is in {}.", run::LOG),
+                run::Event::Failed { title, why } => {
+                    eprintln!("{title} didn't work: {why}\nEverything it did is in {}.", run::LOG)
+                }
             })?;
         }
         ["remove-leftovers", path, "--yes"] => {
@@ -51,7 +53,10 @@ fn main() -> Result<()> {
             let _ = std::process::Command::new("cryptsetup").args(["close", "cryptroot"]).status();
             for cmd in cmds {
                 eprintln!("$ {}", cmd.join(" "));
-                let status = std::process::Command::new(&cmd[0]).args(&cmd[1..]).status().with_context(|| format!("can't run {}", cmd[0]))?;
+                let status = std::process::Command::new(&cmd[0])
+                    .args(&cmd[1..])
+                    .status()
+                    .with_context(|| format!("can't run {}", cmd[0]))?;
                 anyhow::ensure!(status.success(), "{} failed", cmd[0]);
             }
         }
