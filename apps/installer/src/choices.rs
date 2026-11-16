@@ -207,9 +207,6 @@ pub fn person_problem(c: &Choices) -> Option<String> {
     if c.password.is_empty() {
         return Some("Choose a password.".into());
     }
-    if c.password.contains(':') {
-        return Some("A password can't have : in it.".into());
-    }
     if c.password != c.password_again {
         return Some("The two passwords aren't the same.".into());
     }

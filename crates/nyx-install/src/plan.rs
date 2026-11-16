@@ -170,7 +170,7 @@ impl Plan {
         ensure!(!disk.busy, "{} is in use (the live system is on it, or something is mounted)", disk.path);
         ensure!(valid_login(&self.person.login), "a login name is lowercase letters, digits, - and _, starting with a letter");
         ensure!(!self.person.full_name.contains([':', '\n']), "a name can't have : or line breaks");
-        ensure!(!self.person.password.is_empty() && !self.person.password.contains(['\n', ':']), "choose a password");
+        ensure!(!self.person.password.is_empty() && !self.person.password.contains('\n'), "choose a password");
         ensure!(valid_hostname(&self.hostname), "a computer's name is letters, digits and -");
         ensure!(["stable", "testing"].contains(&self.channel.as_str()), "the channel is stable or testing");
         ensure!((1..=256).contains(&self.swap_gib), "between 1 and 256 GiB of swap");
@@ -645,6 +645,10 @@ mod tests {
             panic!()
         };
         assert_eq!(input.as_deref(), Some("amy:hunter22\n"));
+        // chpasswd splits at the first colon only: one in the password is fine.
+        let mut colon = plan(Target::Erase { disk: "/dev/nvme0n1".into() });
+        colon.person.password = "a:b:c".into();
+        colon.validate(&disk(false)).unwrap();
     }
 
     #[test]
