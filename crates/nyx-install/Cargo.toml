@@ -12,7 +12,7 @@ name = "nyx-install"
 path = "src/bin/nyx-install.rs"
 
 [dependencies]
-nyx-system-proto = { git = "https://github.com/nyxos-project/nyx-system.git", rev = "8e723ee" }
+nyx-system-proto = { git = "https://github.com/nyxos-project/nyx-system.git", rev = "3f3c454cdf34cfce571a5ff3802a25817e9301f9" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
