@@ -279,7 +279,7 @@ impl Plan {
                 p.clone(),
             ));
         }
-        s.push(run("Making the Btrfs filesystem", &["mkfs.btrfs", "--force", "--label", "nyxos", &fs]));
+        s.push(run("Making the Btrfs filesystem", &["mkfs.btrfs", "--force", "--nodiscard", "--label", "nyxos", &fs]));
         // The live USB has no /mnt of its own.
         s.push(run("Making subvolumes", &["mkdir", "-p", ROOT]));
         s.push(run("Making subvolumes", &["mount", &fs, ROOT]));
@@ -623,7 +623,7 @@ mod tests {
         assert!(text.contains("--new=2:0:0 --typecode=2:ca7d7ccb-63ed-4c53-861c-1742536059cc"));
         assert!(text.contains("cryptsetup luksFormat --type luks2 --batch-mode --label NyxOS --key-file=- /dev/disk/by-partuuid/66666666-7777-4888-9999-aaaaaaaaaaaa  < (hidden)"));
         assert!(text.contains(
-            "mkfs.btrfs --force --label nyxos /dev/mapper/cryptroot\nmkdir -p /mnt\nmount /dev/mapper/cryptroot /mnt\n"
+            "mkfs.btrfs --force --nodiscard --label nyxos /dev/mapper/cryptroot\nmkdir -p /mnt\nmount /dev/mapper/cryptroot /mnt\n"
         ));
         assert!(!text.contains("gcroots"), "nothing to keep without the live USB's source");
         assert!(text.contains("mount -o subvol=@home,compress=zstd,noatime /dev/mapper/cryptroot /mnt/home"));
@@ -676,7 +676,7 @@ mod tests {
         for w in ["nvme0n1p1", "nvme0n1p2", "nvme0n1p3"] {
             assert!(!text.contains(w), "{w} is Windows'");
         }
-        assert!(text.contains("mkfs.btrfs --force --label nyxos /dev/disk/by-partuuid/66666666"));
+        assert!(text.contains("mkfs.btrfs --force --nodiscard --label nyxos /dev/disk/by-partuuid/66666666"));
         assert!(!text.contains("cryptsetup"));
         assert!(p.host_nix().contains("boot.windows = \"aaaaaaaa-0000-0000-0000-000000000001\";"));
         check(&p, &d).unwrap();
