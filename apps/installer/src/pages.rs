@@ -600,15 +600,52 @@ fn failed(ui: &Rc<Ui>, why: &str, log: &str) -> gtk::Widget {
     let page = w::vbox(16);
     page.append(&heading("The install stopped", why));
     if !log.is_empty() {
+        // The log's end, where the reason is; the whole log and a hardware report go to a
+        // USB stick with one click, so nobody needs a console to send them.
+        let tail = gtk::TextView::builder()
+            .editable(false)
+            .cursor_visible(false)
+            .monospace(true)
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .build();
+        tail.add_css_class("installer-log");
+        tail.buffer().set_text(&nyx_install::report::log_tail(40));
+        let scroller = gtk::ScrolledWindow::builder().child(&tail).min_content_height(220).vexpand(true).build();
+        page.append(&scroller);
+        let end = tail.buffer().end_iter();
+        let mark = tail.buffer().create_mark(None, &end, false);
+        tail.scroll_mark_onscreen(&mark);
         let note = w::label(
             &format!(
-                "Everything the install did is in {log}. Ctrl+Alt+F2 opens a console where you can read it or copy it to a USB stick."
+                "Everything the install did is in {log}. Save it, with a report of this computer's hardware, to a USB stick to send it."
             ),
             "installer-lede",
         );
         note.set_wrap(true);
         note.set_xalign(0.0);
         page.append(&note);
+        let save = gtk::Button::with_label("Save to a USB stick");
+        save.set_halign(gtk::Align::Start);
+        let status = w::label("", "installer-lede");
+        status.set_wrap(true);
+        status.set_xalign(0.0);
+        let st = status.clone();
+        save.connect_clicked(move |b| {
+            b.set_sensitive(false);
+            st.set_text("Saving…");
+            let (tx, rx) = async_channel::bounded::<Result<String, String>>(1);
+            std::thread::spawn(move || {
+                let _ = tx.send_blocking(nyx_install::report::save_to_usb().map_err(|e| format!("{e:#}")));
+            });
+            let (b, st) = (b.clone(), st.clone());
+            glib::spawn_future_local(async move {
+                let result = rx.recv().await.unwrap_or_else(|_| Err("Saving stopped unexpectedly".into()));
+                st.set_text(&result.unwrap_or_else(|e| e));
+                b.set_sensitive(true);
+            });
+        });
+        page.append(&save);
+        page.append(&status);
     }
     let again = gtk::Button::with_label("Back to the review");
     again.set_halign(gtk::Align::Start);

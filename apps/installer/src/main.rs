@@ -13,7 +13,8 @@ pub const APP_ID: &str = "io.github.design_nexus.nyx.Installer";
 /// The theme NyxOS installs (`NYX_INSTALLER_THEME`, which the live USB sets), else
 /// Nyx's default, so the installer looks like the system it puts on the disk.
 fn prefs() -> nyx_theme::ThemePrefs {
-    let theme = std::env::var("NYX_INSTALLER_THEME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| nyx_theme::DEFAULT_THEME.into());
+    let theme =
+        std::env::var("NYX_INSTALLER_THEME").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| nyx_theme::DEFAULT_THEME.into());
     nyx_theme::ThemePrefs { mode: nyx_theme::ThemeMode::Theme, theme, glow: false, reduce_motion: false }
 }
 

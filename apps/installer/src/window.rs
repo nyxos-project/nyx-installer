@@ -137,6 +137,10 @@ pub fn build(app: &gtk::Application) -> Rc<Ui> {
         gtk::ApplicationWindow::builder().application(app).title("Install NyxOS").default_width(1000).default_height(700).build();
     window.add_css_class("installer-window");
     window.set_size_request(760, 560);
+    // The live USB (NYX_INSTALLER_FULLSCREEN): the whole screen, however big it is.
+    if std::env::var_os("NYX_INSTALLER_FULLSCREEN").is_some() {
+        window.fullscreen();
+    }
     // The steps' dots are the frame's top; it keeps its height while they hide.
     let top = w::hbox(0);
     top.add_css_class("installer-top");
