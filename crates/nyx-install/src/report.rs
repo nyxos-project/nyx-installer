@@ -70,16 +70,32 @@ pub fn hardware() -> String {
     s
 }
 
+/// Where to save: a partition, a name for it, and whether it has to be opened through a
+/// loop device (Ventoy's: its device mapper holds the partition to serve the ISO, so it
+/// can't be mounted directly; new files only take free space, never the ISO's).
+struct Target {
+    partition: String,
+    name: String,
+    loop_device: bool,
+}
+
 /// A USB stick to save to: a USB disk that isn't the live system's (that one is busy) with a
-/// partition in a file system Linux writes. Its partition and a name for it.
-fn stick() -> Result<(String, String)> {
+/// partition in a file system Linux writes; failing that, the Ventoy stick the live system
+/// started from.
+fn stick() -> Result<Target> {
     let writable = ["vfat", "exfat", "ntfs", "ntfs3", "ext4", "ext3", "ext2", "btrfs", "xfs"];
-    for d in disks::list()? {
+    let all = disks::list()?;
+    for d in &all {
         if d.transport != "usb" || d.busy {
             continue;
         }
         if let Some(p) = d.partitions.iter().find(|p| !p.mounted && writable.contains(&p.fstype.as_str())) {
-            return Ok((p.path.clone(), d.name()));
+            return Ok(Target { partition: p.path.clone(), name: d.name(), loop_device: false });
+        }
+    }
+    for d in &all {
+        if let Some(p) = d.partitions.iter().find(|p| p.label == "Ventoy" && writable.contains(&p.fstype.as_str())) {
+            return Ok(Target { partition: p.path.clone(), name: format!("{} (Ventoy)", d.name()), loop_device: true });
         }
     }
     bail!("No USB stick to save to: plug one in (FAT, exFAT, NTFS or ext4) and try again")
@@ -88,11 +104,26 @@ fn stick() -> Result<(String, String)> {
 /// Saves the install's log and the hardware report to a USB stick, in a folder named for
 /// the time. Returns where they went.
 pub fn save_to_usb() -> Result<String> {
-    let (partition, name) = stick()?;
+    let Target { partition, name, loop_device } = stick()?;
     let mount = Path::new("/run/nyx-installer/report-usb");
     std::fs::create_dir_all(mount)?;
-    let ran = Command::new("mount").arg(&partition).arg(mount).status().context("mount didn't run")?;
+    let device = if loop_device {
+        let out = Command::new("losetup").args(["--find", "--show", &partition]).output().context("losetup didn't run")?;
+        if !out.status.success() {
+            bail!("{name} couldn't be opened ({partition}): {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    } else {
+        partition.clone()
+    };
+    let detach = || {
+        if loop_device {
+            let _ = Command::new("losetup").args(["--detach", &device]).status();
+        }
+    };
+    let ran = Command::new("mount").arg(&device).arg(mount).status().context("mount didn't run")?;
     if !ran.success() {
+        detach();
         bail!("{name} couldn't be opened ({partition})");
     }
     let stamp = command(&["date", "+%Y-%m-%d-%H%M%S"]).trim().to_string();
@@ -107,6 +138,7 @@ pub fn save_to_usb() -> Result<String> {
     })();
     let _ = Command::new("sync").status();
     let _ = Command::new("umount").arg(mount).status();
+    detach();
     written.with_context(|| format!("writing to {name} didn't work"))?;
     Ok(format!("Saved to {name}, in nyxos-install-{stamp}. You can unplug it."))
 }
